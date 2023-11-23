@@ -1,0 +1,14 @@
+FROM ubuntu:20.04
+
+RUN apt-get update && \
+    apt-get install -y tshark && \
+    mkdir workdir
+
+RUN groupadd wireshark && \
+    usermod -aG wireshark root && \
+    setcap 'CAP_NET_RAW+eip CAP_NET_ADMIN+eip' /usr/bin/tshark && \
+    chgrp wireshark /usr/bin/tshark && \
+    chmod 777 /usr/bin/tshark
+
+COPY ./sniffer /workdir/sniffer
+COPY ./dbwriter /workdir/dbwriter

@@ -1,0 +1,16 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/justin/project/promiscuous-mode-tutorial/hello_world.cpp
+iostream
+-
+pcapplusplus/PcapLiveDevice.h
+-
+pcapplusplus/PcapLiveDeviceList.h
+-
+

@@ -1,0 +1,26 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/justin/project/promiscuous-mode-tutorial/create_send.cpp
+iostream
+-
+pcapplusplus/PcapLiveDevice.h
+-
+pcapplusplus/PcapLiveDeviceList.h
+-
+pcapplusplus/SystemUtils.h
+-
+pcapplusplus/IPv4Layer.h
+-
+pcapplusplus/EthLayer.h
+-
+pcapplusplus/UdpLayer.h
+-
+pcapplusplus/DnsLayer.h
+-
+
