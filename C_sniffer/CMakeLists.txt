@@ -7,6 +7,9 @@ set(CMAKE_CXX_STANDARD 17)
 # Find PcapPlusPlus library
 find_package(PcapPlusPlus REQUIRED)
 
+# Include the nlohmann/json library
+include_directories(/usr/include/nlohmann)
+
 # Add your project source files and link against PcapPlusPlus library
 add_executable(hello_world hello_world.cpp)
 target_link_libraries(hello_world PcapPlusPlus::Packet++ PcapPlusPlus::Pcap++ PcapPlusPlus::Common++)

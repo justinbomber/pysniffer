@@ -1,121 +1,126 @@
 #include <iostream>
+#include <fstream>
+#include <chrono>
+#include <sys/stat.h>
+#include <vector>
+#include <thread>
 #include <pcapplusplus/PcapLiveDevice.h>
 #include <pcapplusplus/PcapLiveDeviceList.h>
 #include <pcapplusplus/SystemUtils.h>
 #include <pcapplusplus/IPv4Layer.h>
 #include <map>
+#include <string>
+#include <nlohmann/json.hpp>
+#include <queue>
 
 int64_t packetCount = 0;
 time_t lasttimestamp = 0;
-std::map<uint16_t, int32_t> fragMap;
-/**
- * A struct for collecting packet statistics
- */
-struct PacketStats
-{
-    int ethPacketCount;
-    int ipv4PacketCount;
-    int ipv6PacketCount;
-    int tcpPacketCount;
-    int udpPacketCount;
-    int dnsPacketCount;
-    int httpPacketCount;
-    int sslPacketCount;
+std::map<std::string, std::string> partitionmap;
+extern std::queue<nlohmann::json> jsonQueue;
 
-    /**
-     * Clear all stats
-     */
-    void clear()
-    {
-        ethPacketCount = 0;
-        ipv4PacketCount = 0;
-        ipv6PacketCount = 0;
-        tcpPacketCount = 0;
-        udpPacketCount = 0;
-        tcpPacketCount = 0;
-        dnsPacketCount = 0;
-        httpPacketCount = 0;
-        sslPacketCount = 0;
+std::string hex_to_ascii(const std::string& hex_string) {
+    std::string start_pattern = "07:00:00:00";
+    std::string end_pattern = "00:00:01";
+
+    size_t start_index = hex_string.find(start_pattern) + start_pattern.length() + 1; // +1 to skip the colon after start_pattern
+    size_t end_index = hex_string.find(end_pattern, start_index);
+
+    if (start_index == std::string::npos || end_index == std::string::npos) {
+        return "no_partition";
     }
 
-    /**
-     * C'tor
-     */
-    PacketStats() { clear(); }
+    std::string hex_substring = hex_string.substr(start_index, end_index - start_index);
+    hex_substring.erase(std::remove(hex_substring.begin(), hex_substring.end(), ':'), hex_substring.end());
 
-    /**
-     * Collect stats from a packet
-     */
-    void consumePacket(pcpp::Packet &packet)
+    std::string ascii_string;
+    for (size_t i = 0; i < hex_substring.length(); i += 2) {
+        std::string hex_byte = hex_substring.substr(i, 2);
+        char ascii_char = static_cast<char>(std::stoi(hex_byte, nullptr, 16));
+        ascii_string += ascii_char;
+    }
+
+    return ascii_string;
+}
+
+static void start_subcap(std::string ipaddr);
+struct PacketStats
+{
+    void dictcallback(pcpp::Packet &packet)
     {
-        if (packet.isPacketOfType(pcpp::Ethernet))
-            ethPacketCount++;
+        if (packet.isPacketOfType(pcpp::IPv4))
+        {
+            pcpp::IPv4Layer *ipLayer = packet.getLayerOfType<pcpp::IPv4Layer>();
+            if (ipLayer != nullptr)
+            {
+                uint8_t *payload = ipLayer->getLayerPayload();
+                size_t payloadLength = ipLayer->getLayerPayloadSize();
+                std::string payloadStr(reinterpret_cast<char *>(payload), payloadLength);
+
+                if (payloadStr.find("RTPS") != std::string::npos)
+                {
+                    //TODO : getpartition
+                    std::string ipaddr = ipLayer->getSrcIPAddress().toString();
+                    std::string partition = hex_to_ascii(payloadStr);
+                    if (partition == "no_partition")
+                        return;
+                    else if (partitionmap.find(partition) == partitionmap.end())
+                    {
+                        PacketStats stats;
+                        partitionmap[ipaddr] = partition;
+                        auto rtps_func = std::bind(&start_subcap, ipaddr);
+                        std::thread rtpscapturethread(rtps_func);
+                        rtpscapturethread.detach();
+                        std::cout << "start capture, ip = " << ipaddr << ",partition = " <<  partition << std::endl;
+                    }
+                }
+            }
+        }
+
+    }
+
+    void rtpscallback(pcpp::Packet &packet, std::string ipaddr)
+    {
         if (packet.isPacketOfType(pcpp::IPv4))
         {
             // 检查封包是否包含 IPv4 层
             pcpp::IPv4Layer *ipLayer = packet.getLayerOfType<pcpp::IPv4Layer>();
             if (ipLayer != nullptr)
             {
-                // 提取源 IP 地址并打印
-                // std::cout << "Source IP: " << ipLayer->getSrcIPAddress().toString() << std::endl;
-                if (ipLayer->getSrcIPAddress().toString().compare("10.1.1.106") == 0)
+                if (ipLayer->getSrcIPAddress().toString().compare(ipaddr) == 0)
                 {
-                    // 获取 IPv4 头部
                     pcpp::iphdr *ipv4Header = ipLayer->getIPv4Header();
-                    // 获取 RTPS 载荷
                     uint8_t *payload = ipLayer->getLayerPayload();
                     size_t payloadLength = ipLayer->getLayerPayloadSize();
-                    // 将载荷转换为字符串，以便进行搜索
                     std::string payloadStr(reinterpret_cast<char *>(payload), payloadLength);
+                    std::string ipaddr = ipLayer->getSrcIPAddress().toString();
 
-                    // 检查载荷中是否包含 "RTPS"
                     if (payloadStr.find("RTPS") != std::string::npos)
                     {
-                        struct timespec timestamp = packet.getRawPacket()->getPacketTimeStamp();
-                        // 转换时间戳为可读格式
-                        time_t rawTime = timestamp.tv_sec;
-                        
-                        
-                        packetCount ++;
-                        std::cout << "package Timestamp: " << rawTime << ", packetCount= " << packetCount << std::endl;
-                        
-                        lasttimestamp = rawTime;
-
+                        if (partitionmap.find(ipaddr) != partitionmap.end())
+                        {
+                            nlohmann::json json_obj;
+                            // TODO : add json
+                            uint32_t timestamp;
+                            int32_t rtps_content;
+                            int total_traffic = timestamp + rtps_content + 36;
+                            json_obj["timestamp"] = timestamp;
+                            json_obj["rtps_content"] = rtps_content;
+                            json_obj["total_traffic"] = total_traffic;
+                            jsonQueue.push(json_obj);
+                        }
+                        else
+                            return;
+                        // TODO : packet calculator func
                     }
                 }
             }
         }
-        if (packet.isPacketOfType(pcpp::IPv6))
-            ipv6PacketCount++;
-        if (packet.isPacketOfType(pcpp::TCP))
-            tcpPacketCount++;
-        if (packet.isPacketOfType(pcpp::UDP))
-        {
-            ;
-        }
-        if (packet.isPacketOfType(pcpp::DNS))
-            dnsPacketCount++;
-        if (packet.isPacketOfType(pcpp::HTTP))
-            httpPacketCount++;
-        if (packet.isPacketOfType(pcpp::SSL))
-            sslPacketCount++;
     }
+};
 
-    /**
-     * Print stats to console
-     */
-    void printToConsole()
-    {
-        // std::cout
-        //     << "Ethernet packet count: " << ethPacketCount << std::endl
-        //     << "IPv4 packet count:     " << ipv4PacketCount << std::endl
-        //     << "IPv6 packet count:     " << ipv6PacketCount << std::endl
-        //     << "TCP packet count:      " << tcpPacketCount << std::endl
-        //     << "UDP packet count:      " << udpPacketCount << std::endl
-        //     << "DNS packet count:      " << dnsPacketCount << std::endl
-        //     << "HTTP packet count:     " << httpPacketCount << std::endl
-        //     << "SSL packet count:      " << sslPacketCount << std::endl;
-    }
+struct CallbackData {
+    PacketStats *stats;
+    std::string ipaddr;
 };
 
 static void onPacketArrives(pcpp::RawPacket *packet, pcpp::PcapLiveDevice *dev, void *cookie)
@@ -126,35 +131,25 @@ static void onPacketArrives(pcpp::RawPacket *packet, pcpp::PcapLiveDevice *dev, 
     // 把 RawPacket 變成分析過的 Packet
     pcpp::Packet parsedPacket(packet);
 
-    // 如果封包是 IPv4
-    if (parsedPacket.isPacketOfType(pcpp::IPv4))
-    {
-        // 找出 Source IP 跟 Destination IP
-        pcpp::IPv4Address srcIP = parsedPacket.getLayerOfType<pcpp::IPv4Layer>()->getSrcIPv4Address();
-        pcpp::IPv4Address destIP = parsedPacket.getLayerOfType<pcpp::IPv4Layer>()->getDstIPv4Address();
-
-    }
-
     // 讓 PacketStats 去做統計
-    stats->consumePacket(parsedPacket);
+    stats->dictcallback(parsedPacket);
 }
 
-int main(int argc, char *argv[])
+static void onRTPSArrives(pcpp::RawPacket *packet, pcpp::PcapLiveDevice *dev, void *cookie)
 {
-    // 可以用 ifconfig 找一下網卡的名字，例如 lo, eth0
+    // 轉換 cookie 為 CallbackData 結構
+    CallbackData* data = static_cast<CallbackData*>(cookie);
+
+    // 把 RawPacket 變成分析過的 Packet
+    pcpp::Packet parsedPacket(packet);
+
+    // 讓 PacketStats 去做統計
+    data->stats->rtpscallback(parsedPacket, data->ipaddr);
+}
+
+static void start_subcap(std::string ipaddr)
+{
     pcpp::PcapLiveDevice *dev = pcpp::PcapLiveDeviceList::getInstance().getPcapLiveDeviceByIpOrName("eno1");
-
-    // 輸出網卡資訊
-    std::cout
-        << "Interface info:" << std::endl
-        << "   Interface name:        " << dev->getName() << std::endl           // get interface name
-        << "   Interface description: " << dev->getDesc() << std::endl           // get interface description
-        << "   MAC address:           " << dev->getMacAddress() << std::endl     // get interface MAC address
-        << "   Default gateway:       " << dev->getDefaultGateway() << std::endl // get default gateway
-        << "   Interface MTU:         " << dev->getMtu() << std::endl;           // get interface MTU
-
-    if (dev->getDnsServers().size() > 0)
-        std::cout << "   DNS server:            " << dev->getDnsServers().at(0) << std::endl;
 
     if (!dev->open())
     {
@@ -166,17 +161,99 @@ int main(int argc, char *argv[])
     std::cout << std::endl
               << "Starting async capture..." << std::endl;
 
-    dev->startCapture(onPacketArrives, &stats);
-
-    // sleep for 10 seconds in main thread, in the meantime packets are captured in the async thread
+    CallbackData data;
+    data.stats = &stats;
+    data.ipaddr = ipaddr;
+    dev->startCapture(onRTPSArrives, &data);
 
     while (1)
     {
         // pcpp::multiPlatformSleep(1);
     }
-    // stop capturing packets
-    dev->stopCapture();
 
-    stats.printToConsole();
+    dev->stopCapture();
+}
+
+void remove_last_comma(const std::string& filename) {
+    std::fstream json_file;
+    json_file.open(filename, std::ios::in | std::ios::out);
+
+    if (json_file.is_open()) {
+        // 移動到文件末尾前兩個字符
+        json_file.seekg(-2, std::ios_base::end);
+        char last_char = json_file.peek();
+        if (last_char == ',') {
+            // 移動回同一位置並截斷文件
+            json_file.seekp(-2, std::ios_base::end);
+            json_file.put(' '); // 替換逗號
+            json_file.put('\n'); // 保持格式
+        }
+        json_file.close();
+    }
+}
+
+void write_to_file(int filesize, const std::string& filepath) {
+    std::vector<std::string> filelst = {filepath + "traffic_details1.json", filepath + "traffic_details2.json"};
+    int index = 0;
+
+    // 初始化文件
+    for (const auto& file : filelst) {
+        std::ofstream json_file(file, std::ofstream::out);
+        json_file << "[\n";
+    }
+
+    while (true) {
+        struct stat stat_buf;
+        int rc = stat(filelst[index].c_str(), &stat_buf);
+        if (rc == 0 && stat_buf.st_size <= filesize) {
+            std::ofstream json_file(filelst[index], std::ofstream::app);
+            while (!jsonQueue.empty()) {
+                nlohmann::json packet = jsonQueue.front();
+                jsonQueue.pop();
+                json_file << packet.dump(4) << ",\n";
+            }
+        } else {
+            // 移除最後一個逗號並關閉文件
+            // 注意：這裡需要實現移除逗號的邏輯
+            remove_last_comma(filelst[index]); // 這是假定的函數，需要您自己實現
+
+            std::ofstream json_file(filelst[index], std::ofstream::app);
+            json_file.seekp(-2, std::ios_base::end); // 回退文件指針
+            json_file << "\n]";
+            index = (index + 1) % 2;
+            std::ofstream next_file(filelst[index], std::ofstream::out);
+            next_file << "[\n";
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+}
+
+int main(int argc, char *argv[])
+{
+    // 可以用 ifconfig 找一下網卡的名字，例如 lo, eth0
+    pcpp::PcapLiveDevice *dev = pcpp::PcapLiveDeviceList::getInstance().getPcapLiveDeviceByIpOrName("eno1");
+
+    if (!dev->open())
+    {
+        throw(std::runtime_error("cannot open device, try with sudo?"));
+    }
+
+    auto write_to_file_func = std::bind(&write_to_file, 10000000, "/");
+    std::thread write_to_file_thread(write_to_file_func);
+    write_to_file_thread.detach();
+
+    PacketStats stats;
+
+    std::cout << std::endl
+              << "Starting async capture..." << std::endl;
+
+    dev->startCapture(onPacketArrives, &stats);
+
+    while (1)
+    {
+        // pcpp::multiPlatformSleep(1);
+    }
+
+    dev->stopCapture();
     return 0;
 }
