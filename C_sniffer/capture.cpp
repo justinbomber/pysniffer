@@ -12,34 +12,45 @@
 #include <string>
 #include <nlohmann/json.hpp>
 #include <queue>
+#include <stdexcept>
 
 int64_t packetCount = 0;
 time_t lasttimestamp = 0;
 std::map<std::string, std::string> partitionmap;
 std::queue<nlohmann::json> jsonQueue;
 
-std::string hex_to_ascii(const std::string& hex_string) {
-    std::string start_pattern = "07:00:00:00";
-    std::string end_pattern = "00:00:01";
+std::string hex_to_ascii(const std::string& hexString) {
+    const std::string startPattern = "07000000";
+    const std::string endPattern = "000001";
 
-    size_t start_index = hex_string.find(start_pattern) + start_pattern.length() + 1; // +1 to skip the colon after start_pattern
-    size_t end_index = hex_string.find(end_pattern, start_index);
+    size_t startIndex = hexString.find(startPattern) + startPattern.length();
+    size_t endIndex = hexString.find(endPattern, startIndex);
 
-    if (start_index == std::string::npos || end_index == std::string::npos) {
+    if (startIndex == std::string::npos || endIndex == std::string::npos) {
         return "no_partition";
     }
 
-    std::string hex_substring = hex_string.substr(start_index, end_index - start_index);
-    hex_substring.erase(std::remove(hex_substring.begin(), hex_substring.end(), ':'), hex_substring.end());
+    std::string hexSubstring = hexString.substr(startIndex, endIndex - startIndex);
 
-    std::string ascii_string;
-    for (size_t i = 0; i < hex_substring.length(); i += 2) {
-        std::string hex_byte = hex_substring.substr(i, 2);
-        char ascii_char = static_cast<char>(std::stoi(hex_byte, nullptr, 16));
-        ascii_string += ascii_char;
+    std::string asciiString = "";
+    for (size_t i = 0; i < hexSubstring.length(); i += 2) {
+        std::string hexByte = hexSubstring.substr(i, 2);
+        char asciiChar = static_cast<char>(std::stoi(hexByte, nullptr, 16));
+
+        if (asciiChar > 127) {
+            return "no_partition";
+        }
+        if (!isprint(static_cast<unsigned char>(asciiChar))) {
+            return "no_partition";
+        }
+        asciiString += asciiChar;
     }
 
-    return ascii_string;
+    if (asciiString.find("\\u") != std::string::npos) {
+        return "no_partition";
+    }
+
+    return asciiString;
 }
 
 static void start_subcap(std::string ipaddr);
@@ -56,15 +67,17 @@ struct PacketStats
                 size_t payloadLength = ipLayer->getLayerPayloadSize();
                 std::string payloadStr(reinterpret_cast<char *>(payload), payloadLength);
 
-                if (payloadStr.find("RTPS") != std::string::npos)
-                {
+                // if (payloadStr.find("RTPS") != std::string::npos)
+                // {
                     //TODO : getpartition
                     std::string ipaddr = ipLayer->getSrcIPAddress().toString();
                     std::string partition = hex_to_ascii(payloadStr);
+                    // std::cout << "inrtps ----->> " << partition << std::endl;
                     if (partition == "no_partition")
                         return;
                     else if (partitionmap.find(partition) == partitionmap.end())
                     {
+                        std::cout << "===========" << partition << std::endl;
                         PacketStats stats;
                         partitionmap[ipaddr] = partition;
                         auto rtps_func = std::bind(&start_subcap, ipaddr);
@@ -72,7 +85,7 @@ struct PacketStats
                         rtpscapturethread.detach();
                         std::cout << "start capture, ip = " << ipaddr << ",partition = " <<  partition << std::endl;
                     }
-                }
+                // }
             }
         }
 
