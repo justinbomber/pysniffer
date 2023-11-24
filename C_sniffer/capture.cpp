@@ -16,7 +16,7 @@
 int64_t packetCount = 0;
 time_t lasttimestamp = 0;
 std::map<std::string, std::string> partitionmap;
-extern std::queue<nlohmann::json> jsonQueue;
+std::queue<nlohmann::json> jsonQueue;
 
 std::string hex_to_ascii(const std::string& hex_string) {
     std::string start_pattern = "07:00:00:00";
