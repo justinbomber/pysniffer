@@ -10,7 +10,7 @@ def format_display_filter(starttime, endtime):
     end_time_str = end_time_str + '.999999'
 
     # Construct the Wireshark display filter string
-    display_filter = f'rtps && ip.src == 10.1.1.164 && frame.time >= "{start_time_str}.000000" && frame.time <= "{end_time_str}"'
+    display_filter = f'ip.src == 10.1.1.87 && frame.time >= "{start_time_str}.000000" && frame.time <= "{end_time_str}"'
 
     return display_filter
 

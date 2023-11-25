@@ -15,7 +15,8 @@
 #include <stdexcept>
 
 int64_t packetCount = 0;
-time_t lasttimestamp = 0;
+time_t n_lasttimestamp = 0;
+time_t s_lasttimestamp = 0;
 std::map<std::string, std::string> partitionmap;
 std::queue<nlohmann::json> jsonQueue;
 
@@ -95,36 +96,40 @@ struct PacketStats
     {
         if (packet.isPacketOfType(pcpp::IPv4))
         {
-            // 检查封包是否包含 IPv4 层
             pcpp::IPv4Layer *ipLayer = packet.getLayerOfType<pcpp::IPv4Layer>();
             if (ipLayer != nullptr)
             {
                 if (ipLayer->getSrcIPAddress().toString().compare(ipaddr) == 0)
                 {
-                    pcpp::iphdr *ipv4Header = ipLayer->getIPv4Header();
-                    uint8_t *payload = ipLayer->getLayerPayload();
-                    size_t payloadLength = ipLayer->getLayerPayloadSize();
-                    std::string payloadStr(reinterpret_cast<char *>(payload), payloadLength);
                     std::string ipaddr = ipLayer->getSrcIPAddress().toString();
-
-                    if (payloadStr.find("RTPS") != std::string::npos)
-                    {
-                        if (partitionmap.find(ipaddr) != partitionmap.end())
+                    timespec rawtime = packet.getRawPacket()->getPacketTimeStamp();
+                    time_t n_timestamp = rawtime.tv_nsec;
+                    time_t s_timestamp = rawtime.tv_sec;
+                    // std::map<std::string, std::string>::iterator it = partitionmap.find(ipaddr);
+                    // if (it != partitionmap.end())
+                    // {
+                        nlohmann::json json_obj;
+                        int32_t rtps_content = packet.getRawPacket()->getRawDataLen();
+                        json_obj["timestamp"] = s_timestamp;
+                        json_obj["dev_partition"] = partitionmap[ipaddr];
+                        json_obj["total_traffic"] = rtps_content;
+                        packetCount = packetCount + rtps_content;
+                        // std::cout <<  "Captured" << std::endl;
+                        // jsonQueue.push(json_obj);
+                        if (s_lasttimestamp != s_timestamp)
                         {
-                            nlohmann::json json_obj;
-                            // TODO : add json
-                            uint32_t timestamp;
-                            int32_t rtps_content;
-                            int total_traffic = timestamp + rtps_content + 36;
-                            json_obj["timestamp"] = timestamp;
-                            json_obj["rtps_content"] = rtps_content;
-                            json_obj["total_traffic"] = total_traffic;
-                            jsonQueue.push(json_obj);
+                            std::cout << "rtps = " << packetCount << std::endl;
+                            std::cout <<  "timestamp = " << s_timestamp << "." << n_timestamp << std::endl;
+                            std::cout << "=========================" << std::endl;
+                            packetCount = 0;
                         }
-                        else
-                            return;
-                        // TODO : packet calculator func
-                    }
+                        
+                    // }
+                    // else
+                        // return;
+                    n_lasttimestamp = n_timestamp;
+                    s_lasttimestamp = s_timestamp;
+
                 }
             }
         }
@@ -157,7 +162,7 @@ static void onRTPSArrives(pcpp::RawPacket *packet, pcpp::PcapLiveDevice *dev, vo
     pcpp::Packet parsedPacket(packet);
 
     // 讓 PacketStats 去做統計
-    data->stats->rtpscallback(parsedPacket, data->ipaddr);
+    data->stats->rtpscallback(parsedPacket, "10.1.1.87");
 }
 
 static void start_subcap(std::string ipaddr)
@@ -245,6 +250,7 @@ int main(int argc, char *argv[])
 {
     // 可以用 ifconfig 找一下網卡的名字，例如 lo, eth0
     pcpp::PcapLiveDevice *dev = pcpp::PcapLiveDeviceList::getInstance().getPcapLiveDeviceByIpOrName("eno1");
+    partitionmap["10.1.1.87"] = "Cam002";
 
     if (!dev->open())
     {
@@ -252,15 +258,16 @@ int main(int argc, char *argv[])
     }
 
     auto write_to_file_func = std::bind(&write_to_file, 10000000, "/");
-    std::thread write_to_file_thread(write_to_file_func);
-    write_to_file_thread.detach();
+    // std::thread write_to_file_thread(write_to_file_func);
+    // write_to_file_thread.detach();
 
     PacketStats stats;
 
     std::cout << std::endl
               << "Starting async capture..." << std::endl;
 
-    dev->startCapture(onPacketArrives, &stats);
+    dev->startCapture(onRTPSArrives, &stats);
+    // dev->startCapture(onPacketArrives, &stats);
 
     while (1)
     {

@@ -334,3 +334,6 @@ ASALocalRun/
 .localhistory/
 
 C_sniffer/build/*
+C_sniffer/.vscode/*
+python_sniffer/build/*
+python_sniffer/dist/*
