@@ -121,7 +121,7 @@ def cal_sort_packet(df, time_window, engine):
     # outdf = aggregate_traffic(df, timerange)
 
     # 刪除不在partition內的資料 ----->> 可以關掉以適應測試環境
-    # outdf = outdf[outdf['dev_partition'].isin(partitionlst)]
+    outdf = outdf[outdf['dev_partition'].isin(partitionlst)]
     
     gc.collect()
     # 返回view table, 結果的table, 服務啟動範圍列表
@@ -142,13 +142,12 @@ def convert_to_dict_of_arrays(data):
 
 def main():
     parser = argparse.ArgumentParser()
-    print("start dbwriter")
 
     # set timewindow
-    parser.add_argument("--timewindow", "-t", default=1, help="時間窗口的整數值(sec), default = 1")
+    parser.add_argument("--timewindow", "-t", default=10, help="時間窗口的整數值(sec), default = 10")
 
     # set filesize
-    parser.add_argument("--filesize", "-f", default=100, help="緩存文件大小的整數值(byte), default = 1000")
+    parser.add_argument("--filesize", "-z", default=1000000, help="緩存文件大小的整數值(byte), default = 1000000")
     
     # set jsonpath
     parser.add_argument("--jsonpath", "-j", default="", help="json文件保存路径，默認根目錄, default = \"/\"")
@@ -173,13 +172,11 @@ def main():
     # 讀取 JSON 文件
     my_list = [args.jsonpath + "traffic_details1.json",args.jsonpath + "traffic_details2.json"]
     index = 0
-    change = True
 
     while True:
         # print(os.path.getsize(my_list[index]))
         if os.path.getsize(my_list[index]) >= int(args.filesize):
-            change = True
-            time.sleep(1)
+            time.sleep(3)
             try:
                 with open(my_list[index], 'r') as json_file:
                     jfile = json.load(json_file)
@@ -200,32 +197,28 @@ def main():
                             no_service = True
                         if (i[0] != 'None' and i[1] != 'None'):
                             service_isend = True
-                    print("=================")
-                    print(outputlst)
-                    # outputlst.to_sql('tb_cam_traffic_info', engine, if_exists='append', index=False)
-                    print("=================")
 
                     if (service_continue):
                         print("service_continue")
-                        # outputlst.to_sql('tb_cam_traffic_info', engine, if_exists='append', index=False)
+                        outputlst.to_sql('tb_cam_traffic_info', engine, if_exists='append', index=False)
                     elif (service_isend):
                         print("service_isend")
                         startmintime = servicetable[servicetable['svc_eff_date'] != 0]['svc_eff_date'].min()
                         endmaxtime = servicetable[servicetable['svc_end_date'] != 0]['svc_end_date'].max()
                         outputlst = outputlst[(outputlst['starttime'] >= startmintime) & (outputlst['endtime'] <= endmaxtime)]
-                        # outputlst.to_sql('tb_cam_traffic_info', engine, if_exists='append', index=False)
+                        outputlst.to_sql('tb_cam_traffic_info', engine, if_exists='append', index=False)
                     else:
                         print("no_service")
                         pass
                     # ----------------------
                     json_file.close()
+                with open(my_list[index], 'w') as json_file:
+                    json_file.close()
             except Exception as e:
                 print(e)
                 pass
-        else:
-            change = False
-        if change:
-            index = (index + 1) % 2
+        time.sleep(1)
+        index = (index + 1) % 2
         gc.collect()
 
 if __name__ == "__main__":

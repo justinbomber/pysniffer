@@ -1,60 +1,120 @@
 #include <iostream>
-#include <fstream>
+#include <thread>
 #include <chrono>
+#include <time.h>
+#include <fstream>
 #include <sys/stat.h>
 #include <vector>
-#include <thread>
 #include <pcapplusplus/PcapLiveDevice.h>
 #include <pcapplusplus/PcapLiveDeviceList.h>
 #include <pcapplusplus/SystemUtils.h>
 #include <pcapplusplus/IPv4Layer.h>
+#include <pcapplusplus/TcpLayer.h>
+#include <pcapplusplus/UdpLayer.h>
 #include <map>
+#include <mutex>
 #include <string>
 #include <nlohmann/json.hpp>
 #include <queue>
 #include <stdexcept>
+#include <sstream>
+#include <iomanip>
+#include <filesystem>
 
 int64_t packetCount = 0;
-time_t n_lasttimestamp = 0;
-time_t s_lasttimestamp = 0;
-std::map<std::string, std::string> partitionmap;
+time_t lasttimestamp = 0;
 std::queue<nlohmann::json> jsonQueue;
+std::mutex queueMutex;
 
-std::string hex_to_ascii(const std::string& hexString) {
-    const std::string startPattern = "07000000";
-    const std::string endPattern = "000001";
+std::map<std::string, std::string> partitionmap;
 
-    size_t startIndex = hexString.find(startPattern) + startPattern.length();
-    size_t endIndex = hexString.find(endPattern, startIndex);
+std::string extractData(uint8_t *payload, size_t length)
+{
+    std::vector<uint8_t> startPattern = {0x07, 0x00, 0x00, 0x00};
+    std::vector<uint8_t> endPattern = {0x00, 0x00, 0x01, 0x00, 0x00};
 
-    if (startIndex == std::string::npos || endIndex == std::string::npos) {
+    // 尋找開始模式
+    size_t startPos = std::string::npos;
+    for (size_t i = 0; i <= length - startPattern.size(); ++i)
+    {
+        if (std::equal(startPattern.begin(), startPattern.end(), &payload[i]))
+        {
+            startPos = i + startPattern.size();
+            break;
+        }
+    }
+
+    // 若未找到開始模式，返回空字符串
+    if (startPos == std::string::npos)
+    {
         return "no_partition";
     }
 
-    std::string hexSubstring = hexString.substr(startIndex, endIndex - startIndex);
-
-    std::string asciiString = "";
-    for (size_t i = 0; i < hexSubstring.length(); i += 2) {
-        std::string hexByte = hexSubstring.substr(i, 2);
-        char asciiChar = static_cast<char>(std::stoi(hexByte, nullptr, 16));
-
-        if (asciiChar > 127) {
-            return "no_partition";
+    // 尋找結束模式
+    size_t endPos = std::string::npos;
+    for (size_t i = startPos; i <= length - endPattern.size(); ++i)
+    {
+        if (std::equal(endPattern.begin(), endPattern.end(), &payload[i]))
+        {
+            endPos = i;
+            break;
         }
-        if (!isprint(static_cast<unsigned char>(asciiChar))) {
-            return "no_partition";
-        }
-        asciiString += asciiChar;
     }
 
-    if (asciiString.find("\\u") != std::string::npos) {
+    // 若未找到結束模式，或者開始和結束位置重疊，返回空字符串
+    if (endPos == std::string::npos || endPos <= startPos)
+    {
         return "no_partition";
     }
 
-    return asciiString;
+    // 提取並轉換數據
+    std::string result;
+    for (size_t i = startPos; i < endPos; ++i)
+    {
+        char ch = static_cast<char>(payload[i]);
+
+        // 檢查是否為 ASCII 字符
+        if (ch >= 0 && ch <= 127)
+        {
+            // 是 ASCII 字符
+            result += ch;
+        }
+        else
+        {
+            // 不是 ASCII 字符
+            return "no_partition";
+        }
+    }
+
+    return result;
 }
 
 static void start_subcap(std::string ipaddr);
+
+void rtpscallback(pcpp::Packet &packet, std::string ipaddr)
+{
+    // get time
+    timespec rawtime = packet.getRawPacket()->getPacketTimeStamp();
+    time_t timestamp = rawtime.tv_sec;
+
+    // get traffic
+    int32_t rtps_content = packet.getRawPacket()->getRawDataLen();
+
+    // pcpp::UdpLayer *udpLayer = packet.getLayerOfType<pcpp::UdpLayer>();
+    // if(udpLayer != nullptr){
+    //     std::cout << "gotudp" << std::endl;
+    //     std::cout << packet.getRawPacket()->getRawDataLen() << std::endl;
+    // }
+
+
+
+    nlohmann::json json_obj;
+    json_obj["timestamp"] = timestamp;
+    json_obj["dev_partition"] = partitionmap[ipaddr];
+    json_obj["total_traffic"] = rtps_content + 2;
+    jsonQueue.push(json_obj);
+}
+
 struct PacketStats
 {
     void dictcallback(pcpp::Packet &packet)
@@ -64,79 +124,36 @@ struct PacketStats
             pcpp::IPv4Layer *ipLayer = packet.getLayerOfType<pcpp::IPv4Layer>();
             if (ipLayer != nullptr)
             {
+                std::string ipaddr = ipLayer->getSrcIPAddress().toString();
+                std::map<std::string, std::string>::iterator it = partitionmap.find(ipaddr);
+
+                if (it != partitionmap.end())
+                {
+                    rtpscallback(packet, ipaddr);
+                    return;
+                }
                 uint8_t *payload = ipLayer->getLayerPayload();
                 size_t payloadLength = ipLayer->getLayerPayloadSize();
-                std::string payloadStr(reinterpret_cast<char *>(payload), payloadLength);
+                std::string partition = extractData(payload, payloadLength);
 
-                // if (payloadStr.find("RTPS") != std::string::npos)
-                // {
-                    //TODO : getpartition
-                    std::string ipaddr = ipLayer->getSrcIPAddress().toString();
-                    std::string partition = hex_to_ascii(payloadStr);
-                    // std::cout << "inrtps ----->> " << partition << std::endl;
-                    if (partition == "no_partition")
-                        return;
-                    else if (partitionmap.find(partition) == partitionmap.end())
-                    {
-                        std::cout << "===========" << partition << std::endl;
-                        PacketStats stats;
-                        partitionmap[ipaddr] = partition;
-                        auto rtps_func = std::bind(&start_subcap, ipaddr);
-                        std::thread rtpscapturethread(rtps_func);
-                        rtpscapturethread.detach();
-                        std::cout << "start capture, ip = " << ipaddr << ",partition = " <<  partition << std::endl;
-                    }
-                // }
-            }
-        }
 
-    }
 
-    void rtpscallback(pcpp::Packet &packet, std::string ipaddr)
-    {
-        if (packet.isPacketOfType(pcpp::IPv4))
-        {
-            pcpp::IPv4Layer *ipLayer = packet.getLayerOfType<pcpp::IPv4Layer>();
-            if (ipLayer != nullptr)
-            {
-                if (ipLayer->getSrcIPAddress().toString().compare(ipaddr) == 0)
+                if (partition == "no_partition")
+                    return;
+                else if (it == partitionmap.end())
                 {
-                    std::string ipaddr = ipLayer->getSrcIPAddress().toString();
-                    timespec rawtime = packet.getRawPacket()->getPacketTimeStamp();
-                    time_t n_timestamp = rawtime.tv_nsec;
-                    time_t s_timestamp = rawtime.tv_sec;
-                    // std::map<std::string, std::string>::iterator it = partitionmap.find(ipaddr);
-                    // if (it != partitionmap.end())
-                    // {
-                        nlohmann::json json_obj;
-                        int32_t rtps_content = packet.getRawPacket()->getRawDataLen();
-                        json_obj["timestamp"] = s_timestamp;
-                        json_obj["dev_partition"] = partitionmap[ipaddr];
-                        json_obj["total_traffic"] = rtps_content;
-                        packetCount = packetCount + rtps_content;
-                        // std::cout <<  "Captured" << std::endl;
-                        // jsonQueue.push(json_obj);
-                        if (s_lasttimestamp != s_timestamp)
-                        {
-                            std::cout << "rtps = " << packetCount << std::endl;
-                            std::cout <<  "timestamp = " << s_timestamp << "." << n_timestamp << std::endl;
-                            std::cout << "=========================" << std::endl;
-                            packetCount = 0;
-                        }
-                        
+                    // if (ipaddr == "10.1.1.87"){
+                        partitionmap.emplace(ipaddr, partition);
+                        std::cout << "start capture, ip = " << ipaddr << ",partition = " << partition << std::endl;
                     // }
-                    // else
-                        // return;
-                    n_lasttimestamp = n_timestamp;
-                    s_lasttimestamp = s_timestamp;
-
                 }
             }
         }
     }
 };
 
-struct CallbackData {
+struct CallbackData
+{
     PacketStats *stats;
     std::string ipaddr;
 };
@@ -153,120 +170,93 @@ static void onPacketArrives(pcpp::RawPacket *packet, pcpp::PcapLiveDevice *dev, 
     stats->dictcallback(parsedPacket);
 }
 
-static void onRTPSArrives(pcpp::RawPacket *packet, pcpp::PcapLiveDevice *dev, void *cookie)
+void processPaths(const std::filesystem::path &path) {
+        // 建立新檔案
+        std::ofstream file(path);
+}
+
+void write_to_file(int filesize, const std::string &filepath)
 {
-    // 轉換 cookie 為 CallbackData 結構
-    CallbackData* data = static_cast<CallbackData*>(cookie);
-
-    // 把 RawPacket 變成分析過的 Packet
-    pcpp::Packet parsedPacket(packet);
-
-    // 讓 PacketStats 去做統計
-    data->stats->rtpscallback(parsedPacket, "10.1.1.87");
-}
-
-static void start_subcap(std::string ipaddr)
-{
-    pcpp::PcapLiveDevice *dev = pcpp::PcapLiveDeviceList::getInstance().getPcapLiveDeviceByIpOrName("eno1");
-
-    if (!dev->open())
-    {
-        throw(std::runtime_error("cannot open device, try with sudo?"));
-    }
-
-    PacketStats stats;
-
-    std::cout << std::endl
-              << "Starting async capture..." << std::endl;
-
-    CallbackData data;
-    data.stats = &stats;
-    data.ipaddr = ipaddr;
-    dev->startCapture(onRTPSArrives, &data);
-
-    while (1)
-    {
-        // pcpp::multiPlatformSleep(1);
-    }
-
-    dev->stopCapture();
-}
-
-void remove_last_comma(const std::string& filename) {
-    std::fstream json_file;
-    json_file.open(filename, std::ios::in | std::ios::out);
-
-    if (json_file.is_open()) {
-        // 移動到文件末尾前兩個字符
-        json_file.seekg(-2, std::ios_base::end);
-        char last_char = json_file.peek();
-        if (last_char == ',') {
-            // 移動回同一位置並截斷文件
-            json_file.seekp(-2, std::ios_base::end);
-            json_file.put(' '); // 替換逗號
-            json_file.put('\n'); // 保持格式
-        }
-        json_file.close();
-    }
-}
-
-void write_to_file(int filesize, const std::string& filepath) {
-    std::vector<std::string> filelst = {filepath + "traffic_details1.json", filepath + "traffic_details2.json"};
     int index = 0;
+    std::vector<std::filesystem::path> filelst;
+    std::string inputfirst = filepath + "traffic_details1.json";
+    std::string inputsecond = filepath + "traffic_details2.json";
+    std::cout << inputfirst << std::endl;
+    std::cout << inputsecond << std::endl;
+    std::filesystem::path firstfile = inputfirst;
+    std::filesystem::path secondfile = inputsecond;
+    filelst.push_back(firstfile);
+    filelst.push_back(secondfile);
 
-    // 初始化文件
-    for (const auto& file : filelst) {
-        std::ofstream json_file(file, std::ofstream::out);
-        json_file << "[\n";
+    for (auto &file : filelst) {
+        processPaths(file);
     }
 
-    while (true) {
-        struct stat stat_buf;
-        int rc = stat(filelst[index].c_str(), &stat_buf);
-        if (rc == 0 && stat_buf.st_size <= filesize) {
-            std::ofstream json_file(filelst[index], std::ofstream::app);
-            while (!jsonQueue.empty()) {
-                nlohmann::json packet = jsonQueue.front();
+    while (true)
+    {
+        nlohmann::json jsonArray;
+        while (true) {
+            while (!jsonQueue.empty()){
+                jsonArray.push_back(jsonQueue.front());
                 jsonQueue.pop();
-                json_file << packet.dump(4) << ",\n";
+                if (jsonArray.size() > 15000)
+                    break;
             }
-        } else {
-            // 移除最後一個逗號並關閉文件
-            // 注意：這裡需要實現移除逗號的邏輯
-            remove_last_comma(filelst[index]); // 這是假定的函數，需要您自己實現
-
-            std::ofstream json_file(filelst[index], std::ofstream::app);
-            json_file.seekp(-2, std::ios_base::end); // 回退文件指針
-            json_file << "\n]";
-            index = (index + 1) % 2;
-            std::ofstream next_file(filelst[index], std::ofstream::out);
-            next_file << "[\n";
+            if (jsonArray.size() > 15000)
+                break;
         }
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        std::cout << "---> jsonArray size: " << jsonArray.size() << std::endl;
+
+        if (jsonArray.size() == 0)
+            continue;
+        std::ofstream file(filelst[index]);
+        if (file.is_open()) {
+            // 獲取系統時鐘的當前時間點
+            auto now = std::chrono::system_clock::now();
+
+            // 轉換為 std::time_t 類型，便於轉換為本地時間
+            std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
+
+            // 將 std::time_t 轉換為字符串形式
+            std::cout << "當前時間是: " << std::ctime(&currentTime);
+
+            file << jsonArray.dump(4);
+            file.close();
+        } else {
+            std::cerr << "failed to open file: " << filelst[index] << std::endl;
+        }
+        index = (index+1) % 2;
+        processPaths(filelst[index]);
     }
+    
 }
 
 int main(int argc, char *argv[])
 {
     // 可以用 ifconfig 找一下網卡的名字，例如 lo, eth0
     pcpp::PcapLiveDevice *dev = pcpp::PcapLiveDeviceList::getInstance().getPcapLiveDeviceByIpOrName("eno1");
-    partitionmap["10.1.1.87"] = "Cam002";
+    // partitionmap["10.1.1.87"] = "Cam002";
 
     if (!dev->open())
     {
         throw(std::runtime_error("cannot open device, try with sudo?"));
     }
 
-    auto write_to_file_func = std::bind(&write_to_file, 10000000, "/");
-    // std::thread write_to_file_thread(write_to_file_func);
-    // write_to_file_thread.detach();
+    std::string filepath = "";
+    if (filepath != "")
+        filepath = filepath + "/";
+
+
+    auto write_to_file_func = std::bind(&write_to_file, 20000000, filepath);
+    std::thread write_to_file_thread(write_to_file_func);
+    write_to_file_thread.detach();
 
     PacketStats stats;
 
     std::cout << std::endl
               << "Starting async capture..." << std::endl;
 
-    dev->startCapture(onRTPSArrives, &stats);
+    dev->startCapture(onPacketArrives, &stats);
     // dev->startCapture(onPacketArrives, &stats);
 
     while (1)
