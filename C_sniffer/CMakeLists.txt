@@ -9,6 +9,7 @@ find_package(PcapPlusPlus REQUIRED)
 
 # Include the nlohmann/json library
 include_directories(/usr/include/nlohmann)
+include_directories(/usr/include)
 
 # Add your project source files and link against PcapPlusPlus library
 add_executable(hello_world hello_world.cpp)
@@ -22,3 +23,6 @@ target_link_libraries(create_send PcapPlusPlus::Packet++ PcapPlusPlus::Pcap++ Pc
 
 add_executable(arp arp.cpp)
 target_link_libraries(arp PcapPlusPlus::Packet++ PcapPlusPlus::Pcap++ PcapPlusPlus::Common++)
+
+add_executable(dbwriter dbwriter.cpp)
+target_link_libraries(dbwriter PcapPlusPlus::Packet++ PcapPlusPlus::Pcap++ PcapPlusPlus::Common++)

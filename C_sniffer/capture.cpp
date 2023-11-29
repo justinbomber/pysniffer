@@ -1,4 +1,5 @@
 #include <iostream>
+#include <netinet/in.h>
 #include <thread>
 #include <chrono>
 #include <time.h>
@@ -11,8 +12,8 @@
 #include <pcapplusplus/IPv4Layer.h>
 #include <pcapplusplus/TcpLayer.h>
 #include <pcapplusplus/UdpLayer.h>
+#include <pcapplusplus/Packet.h>
 #include <map>
-#include <mutex>
 #include <string>
 #include <nlohmann/json.hpp>
 #include <queue>
@@ -24,8 +25,6 @@
 int64_t packetCount = 0;
 time_t lasttimestamp = 0;
 std::queue<nlohmann::json> jsonQueue;
-std::mutex queueMutex;
-
 std::map<std::string, std::string> partitionmap;
 
 std::string extractData(uint8_t *payload, size_t length)
@@ -100,18 +99,10 @@ void rtpscallback(pcpp::Packet &packet, std::string ipaddr)
     // get traffic
     int32_t rtps_content = packet.getRawPacket()->getRawDataLen();
 
-    // pcpp::UdpLayer *udpLayer = packet.getLayerOfType<pcpp::UdpLayer>();
-    // if(udpLayer != nullptr){
-    //     std::cout << "gotudp" << std::endl;
-    //     std::cout << packet.getRawPacket()->getRawDataLen() << std::endl;
-    // }
-
-
-
     nlohmann::json json_obj;
     json_obj["timestamp"] = timestamp;
     json_obj["dev_partition"] = partitionmap[ipaddr];
-    json_obj["total_traffic"] = rtps_content + 2;
+    json_obj["total_traffic"] = rtps_content;
     jsonQueue.push(json_obj);
 }
 
@@ -119,6 +110,7 @@ struct PacketStats
 {
     void dictcallback(pcpp::Packet &packet)
     {
+
         if (packet.isPacketOfType(pcpp::IPv4))
         {
             pcpp::IPv4Layer *ipLayer = packet.getLayerOfType<pcpp::IPv4Layer>();
@@ -132,20 +124,18 @@ struct PacketStats
                     rtpscallback(packet, ipaddr);
                     return;
                 }
+                if (ipaddr == "127.0.0.1")
+                    return;
                 uint8_t *payload = ipLayer->getLayerPayload();
                 size_t payloadLength = ipLayer->getLayerPayloadSize();
                 std::string partition = extractData(payload, payloadLength);
-
-
 
                 if (partition == "no_partition")
                     return;
                 else if (it == partitionmap.end())
                 {
-                    // if (ipaddr == "10.1.1.87"){
-                        partitionmap.emplace(ipaddr, partition);
-                        std::cout << "start capture, ip = " << ipaddr << ",partition = " << partition << std::endl;
-                    // }
+                    partitionmap.emplace(ipaddr, partition);
+                    std::cout << "start capture, ip = " << ipaddr << ",partition = " << partition << std::endl;
                 }
             }
         }
@@ -170,11 +160,6 @@ static void onPacketArrives(pcpp::RawPacket *packet, pcpp::PcapLiveDevice *dev, 
     stats->dictcallback(parsedPacket);
 }
 
-void processPaths(const std::filesystem::path &path) {
-        // 建立新檔案
-        std::ofstream file(path);
-}
-
 void write_to_file(int filesize, const std::string &filepath)
 {
     int index = 0;
@@ -188,29 +173,31 @@ void write_to_file(int filesize, const std::string &filepath)
     filelst.push_back(firstfile);
     filelst.push_back(secondfile);
 
-    for (auto &file : filelst) {
-        processPaths(file);
+    for (auto &file : filelst)
+    {
+        std::ofstream thefile(file);
     }
 
     while (true)
     {
         nlohmann::json jsonArray;
-        while (true) {
-            while (!jsonQueue.empty()){
+        while (jsonArray.size() < filesize)
+        {
+            while (!jsonQueue.empty())
+            {
                 jsonArray.push_back(jsonQueue.front());
                 jsonQueue.pop();
-                if (jsonArray.size() > 15000)
+                if (jsonArray.size() > filesize)
                     break;
             }
-            if (jsonArray.size() > 15000)
-                break;
         }
-        std::cout << "---> jsonArray size: " << jsonArray.size() << std::endl;
 
         if (jsonArray.size() == 0)
             continue;
+        std::cout << "---> jsonArray size: " << jsonArray.size() << std::endl;
         std::ofstream file(filelst[index]);
-        if (file.is_open()) {
+        if (file.is_open())
+        {
             // 獲取系統時鐘的當前時間點
             auto now = std::chrono::system_clock::now();
 
@@ -218,50 +205,92 @@ void write_to_file(int filesize, const std::string &filepath)
             std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
 
             // 將 std::time_t 轉換為字符串形式
-            std::cout << "當前時間是: " << std::ctime(&currentTime);
+            std::cout << "the current time is : " << std::ctime(&currentTime);
 
             file << jsonArray.dump(4);
             file.close();
-        } else {
+        }
+        else
+        {
             std::cerr << "failed to open file: " << filelst[index] << std::endl;
         }
-        index = (index+1) % 2;
-        processPaths(filelst[index]);
+        index = (index + 1) % 2;
+        std::ofstream newfile(filelst[index]);
     }
-    
+}
+
+void printUsage()
+{
+    std::cout << "Usage: [options]\n"
+              << "Options:\n"
+              << "  -i, --interface      Specify the network interface name. Default: any.\n"
+              << "  -p, --packetcount    Set how many packets to process at a time. Default: 15000.\n"
+              << "  -j, --jsonpath       Set the relative path for saving JSON file. Default: current directory.\n"
+              << "  -h, --help           Display this help message.\n";
+}
+
+void capturePackets(std::string interfaceName) {
+
+
 }
 
 int main(int argc, char *argv[])
 {
-    // 可以用 ifconfig 找一下網卡的名字，例如 lo, eth0
-    pcpp::PcapLiveDevice *dev = pcpp::PcapLiveDeviceList::getInstance().getPcapLiveDeviceByIpOrName("eno1");
-    // partitionmap["10.1.1.87"] = "Cam002";
+    std::string interfaceName = "any";
+    int packetCount = 15000;
+    std::string filepath = "";
+
+    for (int i = 1; i < argc; i++)
+    {
+        std::string arg = argv[i];
+        if ((arg == "--interface" || arg == "-i") && i + 1 < argc)
+        {
+            interfaceName = argv[++i];
+        }
+        else if ((arg == "--packetcount" || arg == "-p") && i + 1 < argc)
+        {
+            packetCount = std::atoi(argv[++i]);
+        }
+        else if ((arg == "--jsonpath" || arg == "-j") && i + 1 < argc)
+        {
+            filepath = argv[++i];
+        }
+        else if (arg == "-h" || arg == "--help")
+        {
+            printUsage();
+            return 0;
+        }
+        else
+        {
+            std::cerr << "Unknown argument: " << arg << std::endl;
+            return 1;
+        }
+    }
+
+    if (filepath != "")
+        filepath = filepath + "/";
+    
+    auto write_to_file_func = std::bind(&write_to_file, packetCount, filepath);
+    std::thread write_to_file_thread(write_to_file_func);
+    write_to_file_thread.detach();
+
+    pcpp::PcapLiveDevice *dev = pcpp::PcapLiveDeviceList::getInstance().getPcapLiveDeviceByIpOrName(interfaceName);
 
     if (!dev->open())
     {
         throw(std::runtime_error("cannot open device, try with sudo?"));
     }
 
-    std::string filepath = "";
-    if (filepath != "")
-        filepath = filepath + "/";
-
-
-    auto write_to_file_func = std::bind(&write_to_file, 20000000, filepath);
-    std::thread write_to_file_thread(write_to_file_func);
-    write_to_file_thread.detach();
-
     PacketStats stats;
 
     std::cout << std::endl
-              << "Starting async capture..." << std::endl;
+              << dev->getName() << " ---> Starting async capture..." << std::endl;
 
     dev->startCapture(onPacketArrives, &stats);
-    // dev->startCapture(onPacketArrives, &stats);
 
     while (1)
     {
-        // pcpp::multiPlatformSleep(1);
+        std::this_thread::sleep_for(std::chrono::seconds(20));
     }
 
     dev->stopCapture();

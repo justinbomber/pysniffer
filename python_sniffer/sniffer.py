@@ -25,7 +25,7 @@ def remove_last_comma(file_name):
 
 def write_to_file(filesize, filepath):
     global outputlst
-    my_list = [filepath + "traffic_details1.json", filepath + "traffic_details2.json"]
+    my_list = [filepath + "/traffic_details1.json", filepath + "/traffic_details2.json"]
     index = 0
     for i in my_list:
         with open(i, 'w') as json_file:
@@ -152,7 +152,7 @@ def main():
     # parser.add_argument("--ipaddress", "-a", default="", help="過濾器ip地址， default = ALL")
     parser.add_argument("--filesize", "-z", default=1000000, help="緩存文件大小的整數值(byte), default = 1000000")
     parser.add_argument("--printable", "-p", default="False", help="是否打印, default = False")
-    parser.add_argument("--jsonpath", "-j", default="", help="json文件保存相對路径，默認同資料夾, default = \"\"")
+    parser.add_argument("--jsonpath", "-j", default="", help="json文件保存路径, default = \"/\"")
     args = parser.parse_args()
     combinefilter = ""
     if args.printable == "True":
@@ -161,18 +161,15 @@ def main():
         printable = False
     # if args.filter != "":
         # combinefilter = combinefilter + args.filter
-    jsonpath = ""
-    if args.jsonpath != "":
-        jsonpath = args.jsonpath + "/"
         
     if args.savefile == "True":
-        write_thread = Thread(target=write_to_file, args=(int(args.filesize),jsonpath,))
+        write_thread = Thread(target=write_to_file, args=(int(args.filesize),args.jsonpath,))
         write_thread.start()
     else:
         pass
 
     while True:
-        dictupdater = pyshark.LiveCapture(interface="any", display_filter = "rtps")
+        dictupdater = pyshark.LiveCapture(interface="any", display_filter = combinefilter)
         try:
             dictupdater.apply_on_packets(dict_callback)
             break

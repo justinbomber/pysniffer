@@ -8,6 +8,8 @@ import pandas as pd
 from sqlalchemy import create_engine
 import argparse
 
+test_mode = False
+
 
 pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', None)
@@ -85,6 +87,7 @@ def modify_array(arr, starttimelst, endtimelst):
     return modified_arr
 
 def cal_sort_packet(df, time_window, engine):
+    global test_mode
 
     # 讀取資料，將時間轉為unix timestamp
     viewdf = pd.read_sql_query("SELECT * FROM vw_dds_devices_for_flow_cal", engine)
@@ -121,7 +124,8 @@ def cal_sort_packet(df, time_window, engine):
     # outdf = aggregate_traffic(df, timerange)
 
     # 刪除不在partition內的資料 ----->> 可以關掉以適應測試環境
-    # outdf = outdf[outdf['dev_partition'].isin(partitionlst)]
+    if not test_mode:
+        outdf = outdf[outdf['dev_partition'].isin(partitionlst)]
     
     gc.collect()
     # 返回view table, 結果的table, 服務啟動範圍列表
@@ -141,45 +145,46 @@ def convert_to_dict_of_arrays(data):
     return result
 
 def main():
+    global test_mode
+    print("start...")
     parser = argparse.ArgumentParser()
-    print("start dbwriter")
 
     # set timewindow
-    parser.add_argument("--timewindow", "-t", default=1, help="時間窗口的整數值(sec), default = 1")
+    parser.add_argument("--timewindow", "-t", default=10, help="時間窗口的整數值(sec), default = 10")
 
-    # set filesize
-    parser.add_argument("--filesize", "-f", default=100, help="緩存文件大小的整數值(byte), default = 1000")
-    
     # set jsonpath
-    parser.add_argument("--jsonpath", "-j", default="", help="json文件保存路径，默認根目錄, default = \"/\"")
+    parser.add_argument("--jsonpath", "-j", default="", help="json文件保存相對路径，默認同資料夾, default = \"\"")
     
     # set database
-    parser.add_argument("--username", "-u", default='dds_paas', help="數據庫用戶名, default = dds_paas")
-    parser.add_argument("--password", "-w", default='postgres', help="數據庫密碼, default = postgres")
-    parser.add_argument("--host", "-d", default='10.1.1.200', help="數據庫主機地址, default = 10.1.1.200")
-    parser.add_argument("--port", "-p", default='5433', help="數據庫端口, default = 5433")
-    parser.add_argument("--dbname", "-n", default='paasdb', help="數據庫名稱, default = paasdb")
+    parser.add_argument("--databaseurl", "-d", default='postgresql://postgres:admin@paasdb.default:5433/postgres', help="數據庫URL, default = postgresql://postgres:admin@paasdb.default:5433/postgres")
+
+    #add test_mode
+    parser.add_argument("--test_mode", "-m", default="False", help="是否為測試模式, default = False")
 
     args = parser.parse_args()
-    
-    username = args.username
-    password = args.password
-    host = args.host
-    port = args.port
-    dbname = args.dbname
 
-    engine = create_engine(f'postgresql://{username}:{password}@{host}:{port}/{dbname}')
+
+    jsonpath = ""
+    if args.jsonpath != "":
+        jsonpath = args.jsonpath + "/"
+    
+    if args.test_mode == "True":
+        test_mode = True
+    elif args.test_mode == "False":
+        test_mode = False
+    engine = create_engine(f'{args.databaseurl}')
+
 
     # 讀取 JSON 文件
-    my_list = [args.jsonpath + "traffic_details1.json",args.jsonpath + "traffic_details2.json"]
+    my_list = [jsonpath + "traffic_details1.json",jsonpath + "traffic_details2.json"]
     index = 0
     change = True
 
     while True:
         # print(os.path.getsize(my_list[index]))
-        if os.path.getsize(my_list[index]) >= int(args.filesize):
+        time.sleep(2)
+        if os.path.getsize(my_list[index]) >= 200:
             change = True
-            time.sleep(1)
             try:
                 with open(my_list[index], 'r') as json_file:
                     jfile = json.load(json_file)
@@ -200,20 +205,26 @@ def main():
                             no_service = True
                         if (i[0] != 'None' and i[1] != 'None'):
                             service_isend = True
-                    print("=================")
-                    print(outputlst)
-                    # outputlst.to_sql('tb_cam_traffic_info', engine, if_exists='append', index=False)
-                    print("=================")
 
                     if (service_continue):
                         print("service_continue")
-                        # outputlst.to_sql('tb_cam_traffic_info', engine, if_exists='append', index=False)
+                        if (test_mode):
+                            print("=================")
+                            print(outputlst)
+                            print("=================")
+                        else:
+                            outputlst.to_sql('tb_cam_traffic_info', engine, if_exists='append', index=False)
                     elif (service_isend):
                         print("service_isend")
                         startmintime = servicetable[servicetable['svc_eff_date'] != 0]['svc_eff_date'].min()
                         endmaxtime = servicetable[servicetable['svc_end_date'] != 0]['svc_end_date'].max()
                         outputlst = outputlst[(outputlst['starttime'] >= startmintime) & (outputlst['endtime'] <= endmaxtime)]
-                        # outputlst.to_sql('tb_cam_traffic_info', engine, if_exists='append', index=False)
+                        if (test_mode):
+                            print("=================")
+                            print(outputlst)
+                            print("=================")
+                        else:
+                            outputlst.to_sql('tb_cam_traffic_info', engine, if_exists='append', index=False)
                     else:
                         print("no_service")
                         pass
