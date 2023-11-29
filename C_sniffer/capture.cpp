@@ -24,13 +24,15 @@
 
 int64_t packetCount = 0;
 time_t lasttimestamp = 0;
+std::string g_ipaddr = "";
+std::string g_partition = "";
 std::queue<nlohmann::json> jsonQueue;
 std::map<std::string, std::string> partitionmap;
 
 std::string extractData(uint8_t *payload, size_t length)
 {
     std::vector<uint8_t> startPattern = {0x07, 0x00, 0x00, 0x00};
-    std::vector<uint8_t> endPattern = {0x00, 0x00, 0x01, 0x00, 0x00};
+    std::vector<uint8_t> endPattern = {0x00, 0x00, 0x01, 0x00};
 
     // 尋找開始模式
     size_t startPos = std::string::npos;
@@ -110,7 +112,6 @@ struct PacketStats
 {
     void dictcallback(pcpp::Packet &packet)
     {
-
         if (packet.isPacketOfType(pcpp::IPv4))
         {
             pcpp::IPv4Layer *ipLayer = packet.getLayerOfType<pcpp::IPv4Layer>();
@@ -140,6 +141,28 @@ struct PacketStats
             }
         }
     }
+
+    void specialcallback(pcpp::Packet &packet)
+    {
+        if (packet.isPacketOfType(pcpp::IPv4))
+        {
+            pcpp::IPv4Layer *ipLayer = packet.getLayerOfType<pcpp::IPv4Layer>();
+            if (ipLayer != nullptr)
+            {
+                if (ipLayer->getSrcIPAddress().toString() == g_ipaddr)
+                {
+                    std::string ipaddr = g_ipaddr;
+                    time_t timestamp = packet.getRawPacket()->getPacketTimeStamp().tv_sec;
+                    int32_t rtps_content = packet.getRawPacket()->getRawDataLen();
+                    nlohmann::json json_obj;
+                    json_obj["timestamp"] = timestamp;
+                    json_obj["dev_partition"] = g_partition;
+                    json_obj["total_traffic"] = rtps_content;
+                    jsonQueue.push(json_obj);
+                }
+            }
+        }
+    }
 };
 
 struct CallbackData
@@ -158,6 +181,18 @@ static void onPacketArrives(pcpp::RawPacket *packet, pcpp::PcapLiveDevice *dev, 
 
     // 讓 PacketStats 去做統計
     stats->dictcallback(parsedPacket);
+}
+
+static void onSpecialPacketArrives(pcpp::RawPacket *packet, pcpp::PcapLiveDevice *dev, void *cookie)
+{
+    // 把傳入的 cookie 做轉型原本的 PacketStats 物件
+    PacketStats *stats = (PacketStats *)cookie;
+
+    // 把 RawPacket 變成分析過的 Packet
+    pcpp::Packet parsedPacket(packet);
+
+    // 讓 PacketStats 去做統計
+    stats->specialcallback(parsedPacket);
 }
 
 void write_to_file(int filesize, const std::string &filepath)
@@ -226,6 +261,8 @@ void printUsage()
               << "  -i, --interface      Specify the network interface name. Default: any.\n"
               << "  -p, --packetcount    Set how many packets to process at a time. Default: 15000.\n"
               << "  -j, --jsonpath       Set the relative path for saving JSON file. Default: current directory.\n"
+              << "  -a, --ipaddr         Set the IP address of the device. Default: None.\n"
+              << "  -b, --partition      Set the partition of the . Default: None.\n"
               << "  -h, --help           Display this help message.\n";
 }
 
@@ -239,6 +276,8 @@ int main(int argc, char *argv[])
     std::string interfaceName = "any";
     int packetCount = 15000;
     std::string filepath = "";
+    std::string ipaddr = "";
+    std::string partittion = "";
 
     for (int i = 1; i < argc; i++)
     {
@@ -255,6 +294,14 @@ int main(int argc, char *argv[])
         {
             filepath = argv[++i];
         }
+        else if ((arg == "--ipaddr" || arg == "-a") && i + 1 < argc)
+        {
+            ipaddr = argv[++i];
+        }
+        else if ((arg == "--partition" || arg == "-b") && i + 1 < argc)
+        {
+            partittion = argv[++i];
+        }
         else if (arg == "-h" || arg == "--help")
         {
             printUsage();
@@ -266,6 +313,7 @@ int main(int argc, char *argv[])
             return 1;
         }
     }
+
 
     if (filepath != "")
         filepath = filepath + "/";
@@ -286,7 +334,17 @@ int main(int argc, char *argv[])
     std::cout << std::endl
               << dev->getName() << " ---> Starting async capture..." << std::endl;
 
-    dev->startCapture(onPacketArrives, &stats);
+    if ((ipaddr.size() == 0) && (partittion.size() == 0)) {
+        dev->startCapture(onPacketArrives, &stats);
+    } else if ((ipaddr.size() == 0) || (partittion.size() == 0)) {
+        std::cout << "Please specify both ipaddr and partition" << std::endl;
+        return 0;
+    } else if ((ipaddr.size() > 0) && (partittion.size() > 0)) {
+        g_ipaddr = ipaddr;
+        g_partition = partittion;
+        std::cout << "start capture, ip = " << ipaddr << ",partition = " << partittion << std::endl;
+        dev->startCapture(onSpecialPacketArrives, &stats);
+    }
 
     while (1)
     {

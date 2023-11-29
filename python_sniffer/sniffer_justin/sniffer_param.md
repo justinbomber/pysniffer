@@ -11,6 +11,9 @@
 | `-i`, `--interface` | 指定網路介面名稱 | any |
 | `-p`, `--packetcount` | 設定一次處理多少封包 | 15000 |
 | `-j`, `--jsonpath` | 設定 JSON 檔案的相對路徑 | 目前目錄 |
+| `-a`, `--ipaddr`         | 指定IP地址 (需與partition同時輸入)| None |
+|  `-b`,  `--partition`    | 指定partition (需與ip地址同時輸入) | None |
+
 
 ## dbwriter.py 用法
 
@@ -20,3 +23,4 @@
 | `-t`, `--timewindow` | 時間窗口的整數值(sec) | 10 |
 | `-j`, `--jsonpath` | json文件保存路径 | "/" |
 | `-d`, `--databaseurl` | 數據庫URL | postgresql://postgres:postgres@localhost/postgres |
+| `-z`, `--timezone` | 時區 | UTC+8 |

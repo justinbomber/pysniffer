@@ -23,6 +23,3 @@ target_link_libraries(create_send PcapPlusPlus::Packet++ PcapPlusPlus::Pcap++ Pc
 
 add_executable(arp arp.cpp)
 target_link_libraries(arp PcapPlusPlus::Packet++ PcapPlusPlus::Pcap++ PcapPlusPlus::Common++)
-
-add_executable(dbwriter dbwriter.cpp)
-target_link_libraries(dbwriter PcapPlusPlus::Packet++ PcapPlusPlus::Pcap++ PcapPlusPlus::Common++)
