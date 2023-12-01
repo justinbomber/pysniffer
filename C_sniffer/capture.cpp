@@ -28,6 +28,7 @@ std::string g_ipaddr = "";
 std::string g_partition = "";
 std::queue<nlohmann::json> jsonQueue;
 std::map<std::string, std::string> partitionmap;
+short byte_fix = 0;
 
 std::string extractData(uint8_t *payload, size_t length)
 {
@@ -104,7 +105,7 @@ void rtpscallback(pcpp::Packet &packet, std::string ipaddr)
     nlohmann::json json_obj;
     json_obj["timestamp"] = timestamp;
     json_obj["dev_partition"] = partitionmap[ipaddr];
-    json_obj["total_traffic"] = rtps_content;
+    json_obj["total_traffic"] = rtps_content - byte_fix;
     jsonQueue.push(json_obj);
 }
 
@@ -137,6 +138,13 @@ struct PacketStats
                 {
                     partitionmap.emplace(ipaddr, partition);
                     std::cout << "start capture, ip = " << ipaddr << ",partition = " << partition << std::endl;
+                    for (auto partitioniter = partitionmap.begin(); partitioniter != partitionmap.end();)
+                    {
+                        if (partitioniter->second == partition && partitioniter->first != ipaddr)
+                            partitioniter = partitionmap.erase(partitioniter);
+                        else
+                            ++partitioniter;
+                    }
                 }
             }
         }
@@ -157,7 +165,7 @@ struct PacketStats
                     nlohmann::json json_obj;
                     json_obj["timestamp"] = timestamp;
                     json_obj["dev_partition"] = g_partition;
-                    json_obj["total_traffic"] = rtps_content;
+                    json_obj["total_traffic"] = rtps_content - byte_fix;
                     jsonQueue.push(json_obj);
                 }
             }
@@ -266,9 +274,8 @@ void printUsage()
               << "  -h, --help           Display this help message.\n";
 }
 
-void capturePackets(std::string interfaceName) {
-
-
+void capturePackets(std::string interfaceName)
+{
 }
 
 int main(int argc, char *argv[])
@@ -314,15 +321,18 @@ int main(int argc, char *argv[])
         }
     }
 
-
     if (filepath != "")
         filepath = filepath + "/";
-    
+
     auto write_to_file_func = std::bind(&write_to_file, packetCount, filepath);
     std::thread write_to_file_thread(write_to_file_func);
     write_to_file_thread.detach();
 
     pcpp::PcapLiveDevice *dev = pcpp::PcapLiveDeviceList::getInstance().getPcapLiveDeviceByIpOrName(interfaceName);
+    if (interfaceName == "any")
+        byte_fix = 2;
+    else
+        byte_fix = 0;
 
     if (!dev->open())
     {
@@ -334,12 +344,17 @@ int main(int argc, char *argv[])
     std::cout << std::endl
               << dev->getName() << " ---> Starting async capture..." << std::endl;
 
-    if ((ipaddr.size() == 0) && (partittion.size() == 0)) {
+    if ((ipaddr.size() == 0) && (partittion.size() == 0))
+    {
         dev->startCapture(onPacketArrives, &stats);
-    } else if ((ipaddr.size() == 0) || (partittion.size() == 0)) {
+    }
+    else if ((ipaddr.size() == 0) || (partittion.size() == 0))
+    {
         std::cout << "Please specify both ipaddr and partition" << std::endl;
         return 0;
-    } else if ((ipaddr.size() > 0) && (partittion.size() > 0)) {
+    }
+    else if ((ipaddr.size() > 0) && (partittion.size() > 0))
+    {
         g_ipaddr = ipaddr;
         g_partition = partittion;
         std::cout << "start capture, ip = " << ipaddr << ",partition = " << partittion << std::endl;

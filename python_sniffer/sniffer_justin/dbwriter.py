@@ -10,6 +10,7 @@ import argparse
 
 test_mode = False
 timezone = 8
+databaseurl = 'postgresql://postgres:admin@paasdb.default:5433/postgres'
 
 
 pd.set_option('display.max_rows', None)
@@ -84,22 +85,22 @@ def modify_array(arr, starttimelst, endtimelst):
         modified_arr = new_arr
 
     # Return the modified array
-    print("Modified array: ", modified_arr)
+    # print("Modified array: ", modified_arr)
     return modified_arr
 
-def cal_sort_packet(df, time_window, engine):
+def cal_sort_packet(df, time_window):
     global test_mode
     global timezone
+    global databaseurl
+
+    engine = create_engine(f'{databaseurl}')
 
     # 讀取資料，將時間轉為unix timestamp
     viewdf = pd.read_sql_query("SELECT * FROM vw_dds_devices_for_flow_cal", engine)
+    engine.dispose()
     viewdf = viewdf[['ser_id', 'svc_eff_date', 'svc_end_date', 'dev_partition']]
     viewdf['svc_eff_date'] = viewdf['svc_eff_date'].apply(lambda x: int(x.timestamp()) - timezone*3600 if pd.notnull(x) else 0)
     viewdf['svc_end_date'] = viewdf['svc_end_date'].apply(lambda x: int(x.timestamp()) - timezone*3600 if pd.notnull(x) else 0)
-    print("======")
-    print(viewdf["svc_eff_date"])
-    print(viewdf["svc_end_date"])
-    print("======")
 
 
     # generate service range list
@@ -153,7 +154,8 @@ def convert_to_dict_of_arrays(data):
 def main():
     global test_mode
     global timezone
-    print("start...")
+    global databaseurl
+    print("dbwriter  start...")
     parser = argparse.ArgumentParser()
 
     # set timewindow
@@ -183,7 +185,8 @@ def main():
         test_mode = True
     elif args.test_mode == "False":
         test_mode = False
-    engine = create_engine(f'{args.databaseurl}')
+    databaseurl = args.databaseurl
+    engine = create_engine(f'{databaseurl}')
 
 
     # 讀取 JSON 文件
@@ -202,13 +205,12 @@ def main():
                     # jfile = convert_to_dict_of_arrays(jfile)
                     df_file = pd.DataFrame(jfile)
                     json_file.close()
-                    servicetable, outputlst, date_pairs = cal_sort_packet(df_file, int(args.timewindow), engine)
+                    servicetable, outputlst, date_pairs = cal_sort_packet(df_file, int(args.timewindow))
 
                     # --- 判斷是否drop資料，存入DB ---
                     service_continue = False
                     no_service = False
                     service_isend = False
-                    print(date_pairs)
                     for i in date_pairs:
                         if (i[0] != 'None' and i[1] == 'None'):
                             service_continue = True
@@ -219,26 +221,32 @@ def main():
 
                     if (service_continue):
                         print("service_continue")
-                        if (test_mode):
-                            print("=================")
-                            print(outputlst)
-                            print("=================")
-                        else:
-                            outputlst.to_sql('tb_cam_traffic_info', engine, if_exists='append', index=False)
+                        if not test_mode:
+                            try:
+                                outputlst.to_sql('tb_cam_traffic_info', engine, if_exists='append', index=False)
+                                print("save data to databse successfully.")
+                            except Exception as e:
+                                print(e)
+                                pass
                     elif (service_isend):
                         print("service_isend")
                         startmintime = servicetable[servicetable['svc_eff_date'] != 0]['svc_eff_date'].min()
                         endmaxtime = servicetable[servicetable['svc_end_date'] != 0]['svc_end_date'].max()
                         outputlst = outputlst[(outputlst['starttime'] >= startmintime) & (outputlst['endtime'] <= endmaxtime)]
-                        if (test_mode):
-                            print("=================")
-                            print(outputlst)
-                            print("=================")
-                        else:
-                            outputlst.to_sql('tb_cam_traffic_info', engine, if_exists='append', index=False)
+                        if not test_mode:
+                            try:
+                                outputlst.to_sql('tb_cam_traffic_info', engine, if_exists='append', index=False)
+                                print("save data to databse successfully.")
+                            except Exception as e:
+                                print(e)
+                                pass
                     else:
-                        print("no_service")
+                        print("no_service, drop data.")
                         pass
+                    if (test_mode):
+                        print("=================")
+                        print(outputlst)
+                        print("=================")
                     # ----------------------
                     json_file.close()
             except Exception as e:
