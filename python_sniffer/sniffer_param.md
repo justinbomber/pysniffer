@@ -3,7 +3,7 @@
 
 以下是 sniffer 和 dbwriter 這兩個腳本的命令行選項：
 
-## capture.py 用法
+## capture 用法
 
 | 選項 | 描述 | 預設值 |
 | ---- | ---- | ------ |
@@ -15,7 +15,7 @@
 |  `-b`,  `--partition`    | 指定partition (需與ip地址同時輸入) | None |
 
 
-## dbwriter.py 用法
+## dbwriter 用法
 
 | 選項 | 描述 | 預設值 |
 | ---- | ---- | ------ |

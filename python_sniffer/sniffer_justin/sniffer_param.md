@@ -24,3 +24,4 @@
 | `-j`, `--jsonpath` | json文件保存路径 | "/" |
 | `-d`, `--databaseurl` | 數據庫URL | postgresql://postgres:postgres@localhost/postgres |
 | `-z`, `--timezone` | 時區 | UTC+8 |
+| `-m`, `--testmode` | 測試模式(True/False) | False |

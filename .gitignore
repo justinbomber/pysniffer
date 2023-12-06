@@ -333,6 +333,13 @@ ASALocalRun/
 # Local History for Visual Studio
 .localhistory/
 
+python_sniffer/capture
+python_sniffer/dbwriter
+python_sniffer/*.pcap
+python sniffer/*.zip
+python_sniffer/sniffer_justin/capture
+python_sniffer/sniffer_justin/dbwriter
+
 C_sniffer/build/*
 C_sniffer/.vscode/*
 python_sniffer/build/*
