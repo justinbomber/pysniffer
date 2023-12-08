@@ -20,6 +20,7 @@
 #include <stdexcept>
 #include <sstream>
 #include <iomanip>
+#include <mutex>
 #include <pqxx/pqxx>
 #include <filesystem>
 
@@ -32,40 +33,28 @@ std::map<std::string, std::string> guidmap;
 std::queue<pcpp::Packet> packetQueue1;
 std::queue<pcpp::Packet> packetQueue2;
 std::queue<pcpp::Packet> specialPacketQueue;
+std::mutex mtx;
 pqxx::connection *connection = nullptr;
 short byte_fix = 0;
 
-bool opendatabase(std::string dbName, std::string username, std::string password, std::string hostAddress, int port)
+bool opendatabase(const std::string& url)
 {
     bool result = false;
 
-    try
-    {
-        std::stringstream ss;
-        ss << "dbname=" << dbName
-           << " user=" << username
-           << " password=" << password
-           << " hostaddr=" << hostAddress
-           << " port=" << std::to_string(port);
-
-        connection = new pqxx::connection(ss.str());
-        if (connection->is_open())
-        {
+    try {
+        connection = new pqxx::connection(url);
+        if (connection->is_open()) {
             result = true;
-            std::cout << "Open database successfully." << std::endl;
-        }
-        else
-        {
+            std::cout << "Opened database successfully: " << connection->dbname() << std::endl;
+        } else {
             result = false;
-            std::cout << "Can't open database." << std::endl;
+            std::cout << "Can't open database" << std::endl;
         }
-    }
-    catch(const std::exception& e)
-    {
+    } catch (const std::exception& e) {
         result = false;
-        std::cerr << e.what() << '\n';
+        std::cerr << "Exception occurred: " << e.what() << std::endl;
     }
-    
+
     return result;
 }
 
@@ -88,62 +77,52 @@ bool closedatabase()
     return result;
 }
 
-pqxx::result executeResultset(std::string command, bool useTransaction)
-{
-    pqxx::result result;
+pqxx::result execute_query(const std::string& query) {
+    if (connection == nullptr || !connection->is_open()) {
+        throw std::runtime_error("Database connection is not open");
+    }
 
-    try
-    {
-        if (useTransaction)
-        {
-            pqxx::work tran(*connection);
-            try
-            {
-                result = tran.exec(command);
-                tran.commit();
-            }
-            catch(const std::exception& e)
-            {
-                tran.abort();
-                std::cerr << e.what() << '\n';
-            }
-        }
-        else
-        {
-            pqxx::nontransaction nonTran(*connection);
-            result = nonTran.exec(command);
-        }
-    }
-    catch(const std::exception& e)
-    {
-        std::cerr << e.what() << '\n';
-    }
-    
-    return result;
+    pqxx::work txn(*connection);
+    pqxx::result res = txn.exec(query);
+    txn.commit();
+    return res;
 }
 
-
-void guidmanager(const std::string connection_url)
+void guidmanager(const std::string connection_url, bool test_mode)
 {
     while (true)
     {
-        std::string sqlcmd = "";
-        if (opendatabase(connection_url, "reader", "reader", "127.0.0.1", 5432))
+        std::string sqlcmd =  "SELECT distinct v_guid, dev_partition FROM vw_dds_devices_for_flow_cal "
+                              "WHERE v_guid IS NOT NULL " 
+                              "and (dev_eff_date is NOT NULL and dev_eff_date <= now()) "
+                              "and (dev_end_date is NULL or dev_end_date <= now()) "
+                              "and (svc_eff_date is NOT NULL and svc_eff_date <= now()) "
+                              "and (svc_end_date is NULL or svc_end_date <= now()) ";
+        if (test_mode){
+            sqlcmd = "SELECT distinct v_guid, dev_partition FROM vw_dds_devices_for_flow_cal "
+                     "WHERE v_guid IS NOT NULL "
+                     "AND dev_partition IS NOT NULL";
+        }
+        if (opendatabase(connection_url))
         {
-            pqxx::result guidtableresult = executeResultset(sqlcmd, true);
-            // TODO:search database
+            pqxx::result guidtableresult = execute_query(sqlcmd);
             for (auto const & row : guidtableresult)
             {
-                std::string dev_partition;
-                std::string guid;
-                guidmap.emplace(guid, dev_partition);
+                std::string dev_partition = row[1].as<std::string>();
+
+                std::string v_guid = row[0].as<std::string>();
+                v_guid = v_guid.substr(0, v_guid.size() - 8);
+
+                guidmap.emplace(v_guid, dev_partition);
+                std::lock_guard<std::mutex> guard(mtx);
                 for (auto partitioniter = guidmap.begin(); partitioniter != guidmap.end();)
                 {
-                    if (partitioniter->second ==  dev_partition && partitioniter->first != guid)
+                    if (partitioniter->second ==  dev_partition && partitioniter->first != v_guid)
                         partitioniter = guidmap.erase(partitioniter);
                     else
                         ++partitioniter;
                 }
+                // std::cout << "guid: " << v_guid << " ---> dev_partition: " << dev_partition << std::endl;
             }
 
             if(closedatabase())
@@ -152,10 +131,10 @@ void guidmanager(const std::string connection_url)
                 std::cout << "Can't close database." << std::endl;
         } else {
             std::cout << "Can't open database." << std::endl;
-            continue;
         }
         
         std::this_thread::sleep_for(std::chrono::seconds(5));
+        continue;
     }
 }
 
@@ -176,7 +155,7 @@ struct RTPS_DATA_STRUCTURE
     std::string rtps_hostid;
     std::string rtps_appid;
     std::string rtps_instanceid;
-    std::string rtps_writer_entitykey;
+    // std::string rtps_writer_entitykey;
 
     time_t timestamp;
 };
@@ -241,7 +220,7 @@ RTPS_DATA_STRUCTURE convertrtpspacket(pcpp::Packet &packet, int index)
     rtps_data.rtps_hostid = byteArrayToHexString(payload + index + 8, 4);
     rtps_data.rtps_appid = byteArrayToHexString(payload + index + 12, 4);
     rtps_data.rtps_instanceid = byteArrayToHexString(payload + index + 16, 4);
-    rtps_data.rtps_writer_entitykey = byteArrayToHexString(payload + index + 44, 4);
+    // rtps_data.rtps_writer_entitykey = byteArrayToHexString(payload + index + 44, 4);
 
     rtps_data.timestamp = packet.getRawPacket()->getPacketTimeStamp().tv_sec;
 
@@ -323,20 +302,26 @@ void rtpscallback(int idx, std::queue<pcpp::Packet> &packetQueue)
 
             std::string guid = rtps_data.rtps_hostid +
                                rtps_data.rtps_appid +
-                               rtps_data.rtps_instanceid +
-                               rtps_data.rtps_writer_entitykey;
+                               rtps_data.rtps_instanceid;
+                            //    rtps_data.rtps_writer_entitykey;
 
-            // get time
-            time_t timestamp = rtps_data.timestamp;
+            // if guid in guidmap
+            if (guidmap.find(guid) != guidmap.end())
+            {
+                // get time
+                time_t timestamp = rtps_data.timestamp;
 
-            // get traffic
-            int32_t rtps_content = totalsize_cal(rtps_data.udp_length);
+                // get traffic
+                int32_t rtps_content = totalsize_cal(rtps_data.udp_length);
 
-            nlohmann::json json_obj;
-            json_obj["timestamp"] = timestamp;
-            json_obj["dev_partition"] = guid;
-            json_obj["total_traffic"] = rtps_content;
-            jsonQueue.push(json_obj);
+                nlohmann::json json_obj;
+                json_obj["timestamp"] = timestamp;
+                json_obj["dev_partition"] = guidmap[guid];
+                json_obj["total_traffic"] = rtps_content;
+                jsonQueue.push(json_obj);
+            } else {
+                continue;
+            }
         }
         else
         {
@@ -576,7 +561,9 @@ void printUsage()
               << "  -j, --jsonpath       Set the relative path for saving JSON file. Default: current directory.\n"
               << "  -a, --ipaddr         Set the IP address of the device. Default: None.\n"
               << "  -b, --partition      Set the partition of the . Default: None.\n"
-              << "  -h, --help           Display this help message.\n";
+              << "  -h, --help           Display this help message.\n"
+              << "  -c, --connectionurl Set the PostgreSQL connection URL. Default: postgresql://dds_paas:postgres@10.1.1.200:5433/paasdb.\n"
+              << "  -m, --test_mode      Test mode. Default: False.\n";
 }
 
 void capturePackets(std::string interfaceName)
@@ -590,7 +577,8 @@ int main(int argc, char *argv[])
     std::string filepath = "";
     std::string ipaddr = "";
     std::string partittion = "";
-    std::string connection_url = "postgresql://postgres:postgres@localhost:5432/postgres";
+    std::string connection_url = "postgresql://dds_paas:postgres@10.1.1.200:5433/paasdb";
+    bool test_mode = false;
 
     for (int i = 1; i < argc; i++)
     {
@@ -615,9 +603,13 @@ int main(int argc, char *argv[])
         {
             partittion = argv[++i];
         }
-        else if ((arg == "--connection_url" || arg == "-c") && i + 1 < argc)
+        else if ((arg == "--connectionurl" || arg == "-c") && i + 1 < argc)
         {
             connection_url = argv[++i];
+        }
+        else if ((arg == "--testmode" || arg == "-m") && i + 1 < argc)
+        {
+            test_mode = std::atoi(argv[++i]);
         }
         else if (arg == "-h" || arg == "--help")
         {
@@ -648,9 +640,9 @@ int main(int argc, char *argv[])
     std::thread packet_queue_parser_thread3(packet_queue_parser_func3);
     packet_queue_parser_thread3.detach();
 
-    auto guidmanager_func = std::bind(&guidmanager, connection_url);
+    auto guidmanager_func = std::bind(&guidmanager, connection_url, test_mode);
     std::thread guidmanager_thread(guidmanager_func);
-    // guidmanager_thread.detach();
+    guidmanager_thread.detach();
     
 
     pcpp::PcapLiveDevice *dev = pcpp::PcapLiveDeviceList::getInstance().getPcapLiveDeviceByIpOrName(interfaceName);

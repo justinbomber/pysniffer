@@ -130,10 +130,6 @@ def cal_sort_packet(df, time_window):
     outdf = aggregate_traffic(df, modifytime)
     # outdf = aggregate_traffic(df, timerange)
 
-    # 刪除不在partition內的資料 ----->> 可以關掉以適應測試環境
-    if not test_mode:
-        outdf = outdf[outdf['dev_partition'].isin(partitionlst)]
-    
     gc.collect()
     # 返回view table, 結果的table, 服務啟動範圍列表
     return viewdf, outdf, date_pairs
@@ -165,13 +161,13 @@ def main():
     parser.add_argument("--jsonpath", "-j", default="", help="json文件保存相對路径，默認同資料夾, default = \"\"")
     
     # set database
-    parser.add_argument("--databaseurl", "-d", default='postgresql://postgres:admin@paasdb.default:5433/postgres', help="數據庫URL, default = postgresql://postgres:admin@paasdb.default:5433/postgres")
+    parser.add_argument("--databaseurl", "-d", default='postgresql://dds_paas:postgres@10.1.1.200:5433/paasdb', help="數據庫URL, default = postgresql://dds_paas:postgres@10.1.1.200:5433/paasdb")
 
     # add test_mode
     parser.add_argument("--test_mode", "-m", default="False", help="是否為測試模式, default = False")
 
     # add timezone
-    parser.add_argument("--timezone", "-z", default="8", help="時區, default = Asia/Taipei, UTC+8")
+    parser.add_argument("--timezone", "-z", default="0", help="時區校正, default = Asia/Taipei, 0")
 
     args = parser.parse_args()
 
@@ -206,6 +202,11 @@ def main():
                     df_file = pd.DataFrame(jfile)
                     json_file.close()
                     servicetable, outputlst, date_pairs = cal_sort_packet(df_file, int(args.timewindow))
+
+                    if (test_mode):
+                        print("=================")
+                        print(outputlst)
+                        print("=================")
 
                     # --- 判斷是否drop資料，存入DB ---
                     service_continue = False
@@ -243,10 +244,6 @@ def main():
                     else:
                         print("no_service, drop data.")
                         pass
-                    if (test_mode):
-                        print("=================")
-                        print(outputlst)
-                        print("=================")
                     # ----------------------
                     json_file.close()
             except Exception as e:
