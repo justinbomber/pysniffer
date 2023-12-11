@@ -21,6 +21,7 @@
 #include <sstream>
 #include <iomanip>
 #include <mutex>
+#include <set>
 #include <pqxx/pqxx>
 #include <filesystem>
 
@@ -35,6 +36,7 @@ std::queue<pcpp::Packet> packetQueue2;
 std::queue<pcpp::Packet> specialPacketQueue;
 std::mutex mtx;
 pqxx::connection *connection = nullptr;
+std::set<std::string> globalset;
 short byte_fix = 0;
 
 bool opendatabase(const std::string& url)
@@ -45,7 +47,7 @@ bool opendatabase(const std::string& url)
         connection = new pqxx::connection(url);
         if (connection->is_open()) {
             result = true;
-            std::cout << "Opened database successfully: " << connection->dbname() << std::endl;
+            // std::cout << "Opened database successfully: " << connection->dbname() << std::endl;
         } else {
             result = false;
             std::cout << "Can't open database" << std::endl;
@@ -125,15 +127,16 @@ void guidmanager(const std::string connection_url, bool test_mode)
                 // std::cout << "guid: " << v_guid << " ---> dev_partition: " << dev_partition << std::endl;
             }
 
-            if(closedatabase())
-                std::cout << "Close database successfully." << std::endl;
-            else
-                std::cout << "Can't close database." << std::endl;
+            // if(closedatabase())
+                // std::cout << "Close database successfully." << std::endl;
+            // else
+                // std::cout << "Can't close database." << std::endl;
         } else {
-            std::cout << "Can't open database." << std::endl;
+            // std::cout << "Can't open database." << std::endl;
         }
+        bool colseit = closedatabase();
         
-        std::this_thread::sleep_for(std::chrono::seconds(5));
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
         continue;
     }
 }
@@ -227,6 +230,70 @@ RTPS_DATA_STRUCTURE convertrtpspacket(pcpp::Packet &packet, int index)
     return rtps_data;
 }
 
+std::vector<int> computeLPSArray(const uint8_t *pattern, int M)
+{
+    std::vector<int> lps(M, 0);
+    int len = 0;
+    int i = 1;
+    while (i < M)
+    {
+        if (pattern[i] == pattern[len])
+        {
+            lps[i] = ++len;
+            ++i;
+        }
+        else
+        {
+            if (len != 0)
+            {
+                len = lps[len - 1];
+            }
+            else
+            {
+                lps[i] = 0;
+                ++i;
+            }
+        }
+    }
+    return lps;
+}
+
+int KMPSearch(const uint8_t *pattern, int M, const uint8_t *txt, int N)
+{
+    std::vector<int> lps = computeLPSArray(pattern, M);
+
+    int i = 0;
+    int j = 0;
+    while (i < N)
+    {
+        if (i - j > 50)
+            return -1;
+        if (pattern[j] == txt[i])
+        {
+            ++j;
+            ++i;
+        }
+        if (j == M)
+        {
+            // std::cout << "Pattern found at index " << i - j << std::endl;
+            return i - j;
+            j = lps[j - 1];
+        }
+        else if (i < N && pattern[j] != txt[i])
+        {
+            if (j != 0)
+            {
+                j = lps[j - 1];
+            }
+            else
+            {
+                ++i;
+            }
+        }
+    }
+    return -1;
+}
+
 std::string extractData(uint8_t *payload, size_t length)
 {
     std::vector<uint8_t> startPattern = {0x07, 0x00, 0x00, 0x00};
@@ -300,10 +367,32 @@ void rtpscallback(int idx, std::queue<pcpp::Packet> &packetQueue)
             packetQueue.pop();
             RTPS_DATA_STRUCTURE rtps_data = convertrtpspacket(packet, idx);
 
+
             std::string guid = rtps_data.rtps_hostid +
                                rtps_data.rtps_appid +
                                rtps_data.rtps_instanceid;
                             //    rtps_data.rtps_writer_entitykey;
+            uint8_t *payload = packet.getLayerOfType<pcpp::IPv4Layer>()->getLayerPayload();
+            uint8_t virtualsequence[] = {0x01, 0x01, 0xad, 0xd1, 0xc4, 0x7b, 0x28, 0xba};
+            uint8_t routingsequence[] = {0xdb, 0x2b, 0x50, 0xc9, 0x42, 0xa5, 0xd0, 0xfc};
+            int M = 8;
+            int N = packet.getLayerOfType<pcpp::IPv4Layer>()->getLayerPayloadSize();
+            int virtualindex = KMPSearch(virtualsequence, M, payload, N);
+            int routingindex = KMPSearch(routingsequence, M, payload, N);
+            if(virtualindex != -1)
+            {
+                std::cout << "virtualindex found" << std::endl;
+            } else if(routingindex != -1)
+            {
+                std::cout << "routingindex found" << std::endl;
+            }
+
+            if (globalset.find(guid) == globalset.end())
+            {
+                globalset.insert(guid);
+                std::cout << "ip -->" << packet.getLayerOfType<pcpp::IPv4Layer>()->getSrcIPAddress().toString() << " | guid -->" << guid << " found" << std::endl;
+                // continue;
+            }
 
             // if guid in guidmap
             if (guidmap.find(guid) != guidmap.end())
@@ -314,12 +403,15 @@ void rtpscallback(int idx, std::queue<pcpp::Packet> &packetQueue)
                 // get traffic
                 int32_t rtps_content = totalsize_cal(rtps_data.udp_length);
 
+
                 nlohmann::json json_obj;
                 json_obj["timestamp"] = timestamp;
                 json_obj["dev_partition"] = guidmap[guid];
                 json_obj["total_traffic"] = rtps_content;
+                // std::cout << "save json_obj " << json_obj << std::endl;
                 jsonQueue.push(json_obj);
             } else {
+                // std::cout << "guid -->" << guid << " not found" << std::endl;
                 continue;
             }
         }
@@ -330,69 +422,6 @@ void rtpscallback(int idx, std::queue<pcpp::Packet> &packetQueue)
     }
 }
 
-std::vector<int> computeLPSArray(const uint8_t *pattern, int M)
-{
-    std::vector<int> lps(M, 0);
-    int len = 0;
-    int i = 1;
-    while (i < M)
-    {
-        if (pattern[i] == pattern[len])
-        {
-            lps[i] = ++len;
-            ++i;
-        }
-        else
-        {
-            if (len != 0)
-            {
-                len = lps[len - 1];
-            }
-            else
-            {
-                lps[i] = 0;
-                ++i;
-            }
-        }
-    }
-    return lps;
-}
-
-int KMPSearch(const uint8_t *pattern, int M, const uint8_t *txt, int N)
-{
-    std::vector<int> lps = computeLPSArray(pattern, M);
-
-    int i = 0;
-    int j = 0;
-    while (i < N)
-    {
-        if (i - j > 50)
-            return -1;
-        if (pattern[j] == txt[i])
-        {
-            ++j;
-            ++i;
-        }
-        if (j == M)
-        {
-            // std::cout << "Pattern found at index " << i - j << std::endl;
-            return i - j;
-            j = lps[j - 1];
-        }
-        else if (i < N && pattern[j] != txt[i])
-        {
-            if (j != 0)
-            {
-                j = lps[j - 1];
-            }
-            else
-            {
-                ++i;
-            }
-        }
-    }
-    return -1;
-}
 
 struct PacketStats
 {
@@ -432,7 +461,7 @@ struct PacketStats
                 if (index == 36)
                 {
                     specialPacketQueue.push(packet);
-                    std::cout << "specialPacketQueue size: " << specialPacketQueue.size() << std::endl;
+                    // std::cout << "specialPacketQueue size: " << specialPacketQueue.size() << std::endl;
                 }
 
                 return;
