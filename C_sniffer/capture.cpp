@@ -8,10 +8,7 @@
 #include <vector>
 #include <pcapplusplus/PcapLiveDevice.h>
 #include <pcapplusplus/PcapLiveDeviceList.h>
-#include <pcapplusplus/SystemUtils.h>
 #include <pcapplusplus/IPv4Layer.h>
-#include <pcapplusplus/TcpLayer.h>
-#include <pcapplusplus/UdpLayer.h>
 #include <pcapplusplus/Packet.h>
 #include <map>
 #include <string>
@@ -21,7 +18,6 @@
 #include <sstream>
 #include <iomanip>
 #include <mutex>
-#include <set>
 #include <pqxx/pqxx>
 #include <filesystem>
 
@@ -36,23 +32,28 @@ std::queue<pcpp::Packet> packetQueue2;
 std::queue<pcpp::Packet> specialPacketQueue;
 std::mutex mtx;
 pqxx::connection *connection = nullptr;
-std::set<std::string> globalset;
 short byte_fix = 0;
 
-bool opendatabase(const std::string& url)
+bool opendatabase(const std::string &url)
 {
     bool result = false;
 
-    try {
+    try
+    {
         connection = new pqxx::connection(url);
-        if (connection->is_open()) {
+        if (connection->is_open())
+        {
             result = true;
             // std::cout << "Opened database successfully: " << connection->dbname() << std::endl;
-        } else {
+        }
+        else
+        {
             result = false;
             std::cout << "Can't open database" << std::endl;
         }
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e)
+    {
         result = false;
         std::cerr << "Exception occurred: " << e.what() << std::endl;
     }
@@ -66,11 +67,12 @@ bool closedatabase()
 
     try
     {
-        if (connection->is_open()) connection->disconnect();
+        if (connection->is_open())
+            connection->disconnect();
 
         result = true;
     }
-    catch(const std::exception& e)
+    catch (const std::exception &e)
     {
         result = false;
         std::cerr << e.what() << '\n';
@@ -79,8 +81,10 @@ bool closedatabase()
     return result;
 }
 
-pqxx::result execute_query(const std::string& query) {
-    if (connection == nullptr || !connection->is_open()) {
+pqxx::result execute_query(const std::string &query)
+{
+    if (connection == nullptr || !connection->is_open())
+    {
         throw std::runtime_error("Database connection is not open");
     }
 
@@ -94,13 +98,14 @@ void guidmanager(const std::string connection_url, bool test_mode)
 {
     while (true)
     {
-        std::string sqlcmd =  "SELECT distinct v_guid, dev_partition FROM vw_dds_devices_for_flow_cal "
-                              "WHERE v_guid IS NOT NULL " 
-                              "and (dev_eff_date is NOT NULL and dev_eff_date <= now()) "
-                              "and (dev_end_date is NULL or dev_end_date <= now()) "
-                              "and (svc_eff_date is NOT NULL and svc_eff_date <= now()) "
-                              "and (svc_end_date is NULL or svc_end_date <= now()) ";
-        if (test_mode){
+        std::string sqlcmd = "SELECT distinct v_guid, dev_partition FROM vw_dds_devices_for_flow_cal "
+                             "WHERE v_guid IS NOT NULL "
+                             "and (dev_eff_date is NOT NULL and dev_eff_date <= now()) "
+                             "and (dev_end_date is NULL or dev_end_date <= now()) "
+                             "and (svc_eff_date is NOT NULL and svc_eff_date <= now()) "
+                             "and (svc_end_date is NULL or svc_end_date <= now()) ";
+        if (test_mode)
+        {
             sqlcmd = "SELECT distinct v_guid, dev_partition FROM vw_dds_devices_for_flow_cal "
                      "WHERE v_guid IS NOT NULL "
                      "AND dev_partition IS NOT NULL";
@@ -108,7 +113,7 @@ void guidmanager(const std::string connection_url, bool test_mode)
         if (opendatabase(connection_url))
         {
             pqxx::result guidtableresult = execute_query(sqlcmd);
-            for (auto const & row : guidtableresult)
+            for (auto const &row : guidtableresult)
             {
                 std::string dev_partition = row[1].as<std::string>();
 
@@ -119,7 +124,7 @@ void guidmanager(const std::string connection_url, bool test_mode)
                 std::lock_guard<std::mutex> guard(mtx);
                 for (auto partitioniter = guidmap.begin(); partitioniter != guidmap.end();)
                 {
-                    if (partitioniter->second ==  dev_partition && partitioniter->first != v_guid)
+                    if (partitioniter->second == dev_partition && partitioniter->first != v_guid)
                         partitioniter = guidmap.erase(partitioniter);
                     else
                         ++partitioniter;
@@ -128,14 +133,16 @@ void guidmanager(const std::string connection_url, bool test_mode)
             }
 
             // if(closedatabase())
-                // std::cout << "Close database successfully." << std::endl;
+            // std::cout << "Close database successfully." << std::endl;
             // else
-                // std::cout << "Can't close database." << std::endl;
-        } else {
+            // std::cout << "Can't close database." << std::endl;
+        }
+        else
+        {
             // std::cout << "Can't open database." << std::endl;
         }
         bool colseit = closedatabase();
-        
+
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         continue;
     }
@@ -196,8 +203,8 @@ std::string byteArrayToAsciiString(const uint8_t *byteArray, size_t arraySize)
 
 int totalsize_cal(uint16_t rawsize)
 {
-    int packet_count = floor(rawsize / 1480);
-    int newrawsize = (packet_count + 1) * 34 + rawsize - byte_fix * (packet_count + 1);
+    int packet_count = ceil(rawsize / 1480);
+    int newrawsize = packet_count * 34 + rawsize - byte_fix * (packet_count + 1);
     return newrawsize;
 }
 
@@ -299,7 +306,6 @@ std::string extractData(uint8_t *payload, size_t length)
     std::vector<uint8_t> startPattern = {0x07, 0x00, 0x00, 0x00};
     std::vector<uint8_t> endPattern = {0x00, 0x00, 0x01, 0x00};
 
-    // 尋找開始模式
     size_t startPos = std::string::npos;
     for (size_t i = 0; i <= length - startPattern.size(); ++i)
     {
@@ -310,13 +316,11 @@ std::string extractData(uint8_t *payload, size_t length)
         }
     }
 
-    // 若未找到開始模式，返回空字符串
     if (startPos == std::string::npos)
     {
         return "no_partition";
     }
 
-    // 尋找結束模式
     size_t endPos = std::string::npos;
     for (size_t i = startPos; i <= length - endPattern.size(); ++i)
     {
@@ -327,27 +331,22 @@ std::string extractData(uint8_t *payload, size_t length)
         }
     }
 
-    // 若未找到結束模式，或者開始和結束位置重疊，返回空字符串
     if (endPos == std::string::npos || endPos <= startPos)
     {
         return "no_partition";
     }
 
-    // 提取並轉換數據
     std::string result;
     for (size_t i = startPos; i < endPos; ++i)
     {
         char ch = static_cast<char>(payload[i]);
 
-        // 檢查是否為 ASCII 字符
         if (ch >= 0 && ch <= 127)
         {
-            // 是 ASCII 字符
             result += ch;
         }
         else
         {
-            // 不是 ASCII 字符
             return "no_partition";
         }
     }
@@ -367,32 +366,10 @@ void rtpscallback(int idx, std::queue<pcpp::Packet> &packetQueue)
             packetQueue.pop();
             RTPS_DATA_STRUCTURE rtps_data = convertrtpspacket(packet, idx);
 
-
             std::string guid = rtps_data.rtps_hostid +
                                rtps_data.rtps_appid +
                                rtps_data.rtps_instanceid;
-                            //    rtps_data.rtps_writer_entitykey;
-            uint8_t *payload = packet.getLayerOfType<pcpp::IPv4Layer>()->getLayerPayload();
-            uint8_t virtualsequence[] = {0x01, 0x01, 0xad, 0xd1, 0xc4, 0x7b, 0x28, 0xba};
-            uint8_t routingsequence[] = {0xdb, 0x2b, 0x50, 0xc9, 0x42, 0xa5, 0xd0, 0xfc};
-            int M = 8;
-            int N = packet.getLayerOfType<pcpp::IPv4Layer>()->getLayerPayloadSize();
-            int virtualindex = KMPSearch(virtualsequence, M, payload, N);
-            int routingindex = KMPSearch(routingsequence, M, payload, N);
-            if(virtualindex != -1)
-            {
-                std::cout << "virtualindex found" << std::endl;
-            } else if(routingindex != -1)
-            {
-                std::cout << "routingindex found" << std::endl;
-            }
-
-            if (globalset.find(guid) == globalset.end())
-            {
-                globalset.insert(guid);
-                std::cout << "ip -->" << packet.getLayerOfType<pcpp::IPv4Layer>()->getSrcIPAddress().toString() << " | guid -->" << guid << " found" << std::endl;
-                // continue;
-            }
+            //    rtps_data.rtps_writer_entitykey;
 
             // if guid in guidmap
             if (guidmap.find(guid) != guidmap.end())
@@ -403,14 +380,15 @@ void rtpscallback(int idx, std::queue<pcpp::Packet> &packetQueue)
                 // get traffic
                 int32_t rtps_content = totalsize_cal(rtps_data.udp_length);
 
-
                 nlohmann::json json_obj;
                 json_obj["timestamp"] = timestamp;
                 json_obj["dev_partition"] = guidmap[guid];
                 json_obj["total_traffic"] = rtps_content;
-                // std::cout << "save json_obj " << json_obj << std::endl;
+                std::cout << "save json_obj " << json_obj << std::endl;
                 jsonQueue.push(json_obj);
-            } else {
+            }
+            else
+            {
                 // std::cout << "guid -->" << guid << " not found" << std::endl;
                 continue;
             }
@@ -421,7 +399,6 @@ void rtpscallback(int idx, std::queue<pcpp::Packet> &packetQueue)
         }
     }
 }
-
 
 struct PacketStats
 {
@@ -542,6 +519,7 @@ void write_to_file(int filesize, const std::string &filepath)
 
     while (true)
     {
+        auto startTime = std::chrono::steady_clock::now();
         nlohmann::json jsonArray;
         while (jsonArray.size() < filesize)
         {
@@ -552,6 +530,13 @@ void write_to_file(int filesize, const std::string &filepath)
                 if (jsonArray.size() > filesize)
                     break;
             }
+            auto currentTime = std::chrono::steady_clock::now();
+            auto elapsedTime = std::chrono::duration_cast<std::chrono::seconds>(currentTime - startTime).count();
+
+            if (elapsedTime >= 60)
+            {
+                break;
+            }
         }
 
         if (jsonArray.size() == 0)
@@ -560,13 +545,10 @@ void write_to_file(int filesize, const std::string &filepath)
         std::ofstream file(filelst[index]);
         if (file.is_open())
         {
-            // 獲取系統時鐘的當前時間點
             auto now = std::chrono::system_clock::now();
 
-            // 轉換為 std::time_t 類型，便於轉換為本地時間
             std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
 
-            // 將 std::time_t 轉換為字符串形式
             std::cout << "the current time is : " << std::ctime(&currentTime);
 
             file << jsonArray.dump(4);
@@ -672,7 +654,6 @@ int main(int argc, char *argv[])
     auto guidmanager_func = std::bind(&guidmanager, connection_url, test_mode);
     std::thread guidmanager_thread(guidmanager_func);
     guidmanager_thread.detach();
-    
 
     pcpp::PcapLiveDevice *dev = pcpp::PcapLiveDeviceList::getInstance().getPcapLiveDeviceByIpOrName(interfaceName);
     if (interfaceName == "any")
