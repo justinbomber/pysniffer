@@ -21,15 +21,12 @@
 #include <pqxx/pqxx>
 #include <filesystem>
 
-int64_t packetCount = 0;
-time_t lasttimestamp = 0;
+int curretqueue = 0;
 std::string g_ipaddr = "";
 std::string g_partition = "";
 std::queue<nlohmann::json> jsonQueue;
 std::map<std::string, std::string> guidmap;
-std::queue<pcpp::Packet> packetQueue1;
-std::queue<pcpp::Packet> packetQueue2;
-std::queue<pcpp::Packet> specialPacketQueue;
+std::vector<std::queue<pcpp::Packet>> packetQueuesvec;
 std::mutex mtx;
 pqxx::connection *connection = nullptr;
 short byte_fix = 0;
@@ -98,12 +95,15 @@ void guidmanager(const std::string connection_url, bool test_mode)
 {
     while (true)
     {
+        //     std::string sqlcmd = "SELECT distinct v_guid, dev_partition FROM vw_dds_devices_for_flow_cal "
+        //                          "WHERE v_guid IS NOT NULL "
+        //                          "and (dev_eff_date is NOT NULL and dev_eff_date <= now()) "
+        //                          "and (dev_end_date is NULL or dev_end_date <= now()) "
+        //                          "and (svc_eff_date is NOT NULL and svc_eff_date <= now()) "
+        //                          "and (svc_end_date is NULL or svc_end_date <= now()) ";
         std::string sqlcmd = "SELECT distinct v_guid, dev_partition FROM vw_dds_devices_for_flow_cal "
                              "WHERE v_guid IS NOT NULL "
-                             "and (dev_eff_date is NOT NULL and dev_eff_date <= now()) "
-                             "and (dev_end_date is NULL or dev_end_date <= now()) "
-                             "and (svc_eff_date is NOT NULL and svc_eff_date <= now()) "
-                             "and (svc_end_date is NULL or svc_end_date <= now()) ";
+                             "AND dev_partition IS NOT NULL";
         if (test_mode)
         {
             sqlcmd = "SELECT distinct v_guid, dev_partition FROM vw_dds_devices_for_flow_cal "
@@ -204,7 +204,7 @@ std::string byteArrayToAsciiString(const uint8_t *byteArray, size_t arraySize)
 int totalsize_cal(uint16_t rawsize)
 {
     int packet_count = ceil(rawsize / 1480);
-    int newrawsize = packet_count * 34 + rawsize - byte_fix * (packet_count + 1);
+    int newrawsize = packet_count * 34 + rawsize - byte_fix * packet_count;
     return newrawsize;
 }
 
@@ -273,8 +273,8 @@ int KMPSearch(const uint8_t *pattern, int M, const uint8_t *txt, int N)
     int j = 0;
     while (i < N)
     {
-        if (i - j > 50)
-            return -1;
+        // if (i - j > 50)
+        // return -1;
         if (pattern[j] == txt[i])
         {
             ++j;
@@ -356,7 +356,7 @@ std::string extractData(uint8_t *payload, size_t length)
 
 static void start_subcap(std::string ipaddr);
 
-void rtpscallback(int idx, std::queue<pcpp::Packet> &packetQueue)
+void rtpscallback(std::queue<pcpp::Packet> &packetQueue)
 {
     while (true)
     {
@@ -364,33 +364,43 @@ void rtpscallback(int idx, std::queue<pcpp::Packet> &packetQueue)
         {
             pcpp::Packet packet = packetQueue.front();
             packetQueue.pop();
-            RTPS_DATA_STRUCTURE rtps_data = convertrtpspacket(packet, idx);
+            std::string ipaddr = packet.getLayerOfType<pcpp::IPv4Layer>()->getSrcIPAddress().toString();
+            if (ipaddr == "127.0.0.1")
+                return;
+            uint8_t *payload = packet.getLayerOfType<pcpp::IPv4Layer>()->getLayerPayload();
+            size_t payloadLength = packet.getLayerOfType<pcpp::IPv4Layer>()->getLayerPayloadSize();
 
-            std::string guid = rtps_data.rtps_hostid +
-                               rtps_data.rtps_appid +
-                               rtps_data.rtps_instanceid;
-            //    rtps_data.rtps_writer_entitykey;
+            uint8_t searchBytes[] = {0x52, 0x54, 0x50, 0x53};
+            int M = sizeof(searchBytes) / sizeof(searchBytes[0]);
+            int N = payloadLength;
+            int index = KMPSearch(searchBytes, M, payload, N);
 
-            // if guid in guidmap
-            if (guidmap.find(guid) != guidmap.end())
+            if (index == 8 || index == 36)
             {
-                // get time
-                time_t timestamp = rtps_data.timestamp;
+                RTPS_DATA_STRUCTURE rtps_data = convertrtpspacket(packet, index);
 
-                // get traffic
-                int32_t rtps_content = totalsize_cal(rtps_data.udp_length);
+                std::string guid = rtps_data.rtps_hostid +
+                                   rtps_data.rtps_appid +
+                                   rtps_data.rtps_instanceid;
+                //    rtps_data.rtps_writer_entitykey;
+                // std::cout <<  " packet length " << rtps_data.udp_length << std::endl;
 
-                nlohmann::json json_obj;
-                json_obj["timestamp"] = timestamp;
-                json_obj["dev_partition"] = guidmap[guid];
-                json_obj["total_traffic"] = rtps_content;
-                std::cout << "save json_obj " << json_obj << std::endl;
-                jsonQueue.push(json_obj);
-            }
-            else
-            {
-                // std::cout << "guid -->" << guid << " not found" << std::endl;
-                continue;
+                // if guid in guidmap
+                if (guidmap.find(guid) != guidmap.end())
+                {
+                    // get time
+                    time_t timestamp = rtps_data.timestamp;
+
+                    // get traffic
+                    int32_t rtps_content = totalsize_cal(rtps_data.udp_length);
+
+                    nlohmann::json json_obj;
+                    json_obj["timestamp"] = timestamp;
+                    json_obj["dev_partition"] = guidmap[guid];
+                    json_obj["total_traffic"] = rtps_content;
+                    std::cout << "save json_obj " << json_obj << std::endl;
+                    jsonQueue.push(json_obj);
+                }
             }
         }
         else
@@ -409,38 +419,9 @@ struct PacketStats
             pcpp::IPv4Layer *ipLayer = packet.getLayerOfType<pcpp::IPv4Layer>();
             if (ipLayer != nullptr)
             {
-                std::string ipaddr = ipLayer->getSrcIPAddress().toString();
-                if (ipaddr == "127.0.0.1")
-                    return;
-
-                uint8_t *payload = ipLayer->getLayerPayload();
-                size_t payloadLength = ipLayer->getLayerPayloadSize();
-                time_t timestamp = packet.getRawPacket()->getPacketTimeStamp().tv_sec;
-
-                uint8_t searchBytes[] = {0x52, 0x54, 0x50, 0x53};
-                int M = sizeof(searchBytes) / sizeof(searchBytes[0]);
-                int N = payloadLength;
-                int index = KMPSearch(searchBytes, M, payload, N);
-
-                if (index == 8)
-                {
-                    if (timestamp % 2 == 0)
-                    {
-                        packetQueue1.push(packet);
-                        // std::cout << "packetQueue1 size: " << packetQueue1.size() << std::endl;
-                    }
-                    else
-                    {
-                        packetQueue2.push(packet);
-                        // std::cout << "packetQueue2 size: " << packetQueue2.size() << std::endl;
-                    }
-                }
-                if (index == 36)
-                {
-                    specialPacketQueue.push(packet);
-                    // std::cout << "specialPacketQueue size: " << specialPacketQueue.size() << std::endl;
-                }
-
+                // std::cout << "currtqueue " << curretqueue << std::endl;
+                packetQueuesvec[curretqueue].push(packet);
+                curretqueue = (curretqueue + 1) % packetQueuesvec.size();
                 return;
             }
         }
@@ -573,12 +554,9 @@ void printUsage()
               << "  -a, --ipaddr         Set the IP address of the device. Default: None.\n"
               << "  -b, --partition      Set the partition of the . Default: None.\n"
               << "  -h, --help           Display this help message.\n"
-              << "  -c, --connectionurl Set the PostgreSQL connection URL. Default: postgresql://dds_paas:postgres@10.1.1.200:5433/paasdb.\n"
-              << "  -m, --test_mode      Test mode. Default: False.\n";
-}
-
-void capturePackets(std::string interfaceName)
-{
+              << "  -c, --connectionurl  Set the PostgreSQL connection URL. Default: postgresql://dds_paas:postgres@10.1.1.200:5433/paasdb.\n"
+              << "  -m, --testmode      Test mode. Default: False.\n"
+              << "  -t, --threadcount   Set the number of threads. Default: 3.\n";
 }
 
 int main(int argc, char *argv[])
@@ -590,6 +568,7 @@ int main(int argc, char *argv[])
     std::string partittion = "";
     std::string connection_url = "postgresql://dds_paas:postgres@10.1.1.200:5433/paasdb";
     bool test_mode = false;
+    int thread_count = 3;
 
     for (int i = 1; i < argc; i++)
     {
@@ -618,6 +597,10 @@ int main(int argc, char *argv[])
         {
             connection_url = argv[++i];
         }
+        else if ((arg == "--threadcount" || arg == "-t") && i + 1 < argc)
+        {
+            thread_count = std::atoi(argv[++i]);
+        }
         else if ((arg == "--testmode" || arg == "-m") && i + 1 < argc)
         {
             test_mode = std::atoi(argv[++i]);
@@ -641,15 +624,17 @@ int main(int argc, char *argv[])
     std::thread write_to_file_thread(write_to_file_func);
     write_to_file_thread.detach();
 
-    auto packet_queue_parser_func1 = std::bind(&rtpscallback, 8, std::ref(packetQueue1));
-    std::thread packet_queue_parser_thread1(packet_queue_parser_func1);
-    packet_queue_parser_thread1.detach();
-    auto packet_queue_parser_func2 = std::bind(&rtpscallback, 8, std::ref(packetQueue2));
-    std::thread packet_queue_parser_thread2(packet_queue_parser_func2);
-    packet_queue_parser_thread2.detach();
-    auto packet_queue_parser_func3 = std::bind(&rtpscallback, 36, std::ref(specialPacketQueue));
-    std::thread packet_queue_parser_thread3(packet_queue_parser_func3);
-    packet_queue_parser_thread3.detach();
+    for (int i = 0; i < thread_count; i++)
+    {
+        std::queue<pcpp::Packet> packetQueue;
+        packetQueuesvec.push_back(packetQueue);
+    }
+    for (int i = 0; i < thread_count; i++)
+    {
+        auto packet_queue_parser_func = std::bind(&rtpscallback, std::ref(packetQueuesvec[i]));
+        std::thread packet_queue_parser_thread(packet_queue_parser_func);
+        packet_queue_parser_thread.detach();
+    }
 
     auto guidmanager_func = std::bind(&guidmanager, connection_url, test_mode);
     std::thread guidmanager_thread(guidmanager_func);

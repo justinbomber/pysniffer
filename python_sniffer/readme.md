@@ -1,13 +1,25 @@
 
 # capture 及 dbwriter 指令選項
 
-以下是 sniffer 和 dbwriter 這兩個腳本的命令行選項：
+**以下是 sniffer 和 dbwriter 這兩個腳本的命令行選項：**
 
-## capture.py 用法
+- ## capture 
 
+### 1. 簡介：
+此模組負責抓取封包，並進行初步的處理後存為json供dbwriter寫入DataBase。
+
+### 2. 編譯環境及依賴包：
+
+- 編譯環境：C++17
+- library：
+    - pcapplusplus
+    - pqxx
+- 打包工具：Cmake
+
+### 3. arguments傳入用法：
 | 選項 | 描述 | 預設值 |
 | ---- | ---- | ------ |
-| `-h`, `--help` | 顯示此幫助訊息 | - |
+| `-h`, `--help` | 顯示幫助訊息 | - |
 | `-i`, `--interface` | 指定網路介面名稱 | any |
 | `-p`, `--packetcount` | 設定一次處理多少封包 | 15000 |
 | `-j`, `--jsonpath` | 設定 JSON 檔案的相對路徑 | 目前目錄 |
@@ -17,7 +29,22 @@
 | `-m`, `--testmode` | 測試模式(true/false) | false |
 
 
-## dbwriter.py 用法
+- ## dbwriter
+
+### 1. 簡介：
+此模組負責將json中抓到的封包流量進行流量的加總及切片後，根據服務啟動的時間區間，將流量存取至DataBase中。
+
+### 2. 編譯環境及依賴包：
+- 編譯環境：python 3.11
+- pip包:
+  - pandas
+  - psycopg2
+  - psycopg2-binary
+  - sqlalchemy
+- 打包工具：pyinstaller
+
+
+### 3. arguments 傳入用法說明：
 
 | 選項 | 描述 | 預設值 |
 | ---- | ---- | ------ |
