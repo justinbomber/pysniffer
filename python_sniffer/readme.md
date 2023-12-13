@@ -25,8 +25,9 @@
 | `-j`, `--jsonpath` | 設定 JSON 檔案的相對路徑 | 目前目錄 |
 | `-a`, `--ipaddr`         | 指定IP地址 (需與partition同時輸入)| None |
 | `-b`,  `--partition`    | 指定partition (需與ip地址同時輸入) | None |
-| `-c`, `--connectionurl` | 數據庫URL | postgresql://dds_paas:postgres@10.1.1.200:5433/paasdb |
+| `-c`, `--connectionurl` | 數據庫URL | postgresql://postgres:admin@140.110.7.17:5433/postgres |
 | `-m`, `--testmode` | 測試模式(true/false) | false |
+| `-t`, `--threadcount` | 用幾個thread來處理流量封包 | 3 |
 
 
 - ## dbwriter
@@ -51,6 +52,6 @@
 | `-h`, `--help` | 顯示幫助信息 | - |
 | `-t`, `--timewindow` | 時間窗口的整數值(sec) | 10 |
 | `-j`, `--jsonpath` | json文件保存路径 | "/" |
-| `-d`, `--databaseurl` | 數據庫URL | postgresql://dds_paas:postgres@10.1.1.200:5433/paasdb |
+| `-d`, `--databaseurl` | 數據庫URL | postgresql://postgres:admin@140.110.7.17:5433/postgres |
 | `-z`, `--timezone` | 時區校正 | 0 |
 | `-m`, `--testmode` | 測試模式(True/False) | False |

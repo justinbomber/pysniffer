@@ -10,7 +10,7 @@ import argparse
 
 test_mode = False
 timezone = 8
-databaseurl = 'postgresql://postgres:admin@paasdb.default:5433/postgres'
+databaseurl = 'postgresql://postgres:admin@140.110.7.17:5433/postgres'
 
 
 pd.set_option('display.max_rows', None)
@@ -161,7 +161,8 @@ def main():
     parser.add_argument("--jsonpath", "-j", default="", help="json文件保存相對路径，默認同資料夾, default = \"\"")
     
     # set database
-    parser.add_argument("--databaseurl", "-d", default='postgresql://dds_paas:postgres@10.1.1.200:5433/paasdb', help="數據庫URL, default = postgresql://dds_paas:postgres@10.1.1.200:5433/paasdb")
+    parser.add_argument("--databaseurl", "-d", default='postgresql://postgres:njTqJ2cavzJi0PfugfpY1jf61yp5jmoqIB1fFyIGw8w=@paasdb.default:5433/postgres', 
+                        help="數據庫URL, default = postgresql://postgres:njTqJ2cavzJi0PfugfpY1jf61yp5jmoqIB1fFyIGw8w=@paasdb.default:5433/postgres")
 
     # add test_mode
     parser.add_argument("--test_mode", "-m", default="False", help="是否為測試模式, default = False")
@@ -172,6 +173,13 @@ def main():
     args = parser.parse_args()
 
     timezone = int(args.timezone)
+    def replace_password_in_url(url, old_password, new_password):
+        return url.replace(old_password, new_password)
+
+    old_password = "njTqJ2cavzJi0PfugfpY1jf61yp5jmoqIB1fFyIGw8w="
+    new_password = "admin"
+
+    
 
     jsonpath = ""
     if args.jsonpath != "":
@@ -181,7 +189,10 @@ def main():
         test_mode = True
     elif args.test_mode == "False":
         test_mode = False
+
     databaseurl = args.databaseurl
+    new_url = replace_password_in_url(databaseurl, old_password, new_password)
+    databaseurl = new_url
     engine = create_engine(f'{databaseurl}')
 
 

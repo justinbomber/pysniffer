@@ -1,0 +1,14 @@
+FROM ubuntu:20.04
+
+# 創建工作目錄
+WORKDIR /workdir
+
+# 複製你的應用程式到容器
+COPY capture /workdir/capture
+COPY dbwriter /workdir/dbwriter
+COPY startsniffer.sh /workdir/startsniffer.sh
+
+RUN apt-get update && \
+    apt-get install -y libcap2-bin libpcap0.8 libcap-dev libpqxx-dev && \
+    chmod +x startsniffer.sh && \
+    setcap 'CAP_NET_RAW+eip' capture

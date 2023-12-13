@@ -19,6 +19,7 @@
 | `-b`,  `--partition`    | 指定partition (需與ip地址同時輸入) | None |
 | `-c`, `--connectionurl` | 數據庫URL | postgresql://dds_paas:postgres@10.1.1.200:5433/paasdb |
 | `-m`, `--testmode` | 測試模式(true/false) | false |
+| `-t`, `--threadcount` | 用幾個thread來處理流量封包 | 3 |
 
 
 ## dbwriter

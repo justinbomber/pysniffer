@@ -101,18 +101,29 @@ void guidmanager(const std::string connection_url, bool test_mode)
         //                          "and (dev_end_date is NULL or dev_end_date <= now()) "
         //                          "and (svc_eff_date is NOT NULL and svc_eff_date <= now()) "
         //                          "and (svc_end_date is NULL or svc_end_date <= now()) ";
-        std::string sqlcmd = "SELECT distinct v_guid, dev_partition FROM vw_dds_devices_for_flow_cal "
-                             "WHERE v_guid IS NOT NULL "
-                             "AND dev_partition IS NOT NULL";
+
+        std::string sqlcmd = "SELECT distinct org_v_guid, dev_partition FROM vw_dds_devices_for_flow_cal "
+                             "WHERE org_v_guid IS NOT NULL "
+                             "AND (dev_eff_date is NOT NULL and dev_eff_date <= now()) "
+                             "AND (dev_end_date is NULL or dev_end_date <= now()) "
+                             "AND (svc_eff_date is NOT NULL and svc_eff_date <= now()) "
+                             "AND (svc_end_date is NULL or svc_end_date <= now())";
         if (test_mode)
         {
-            sqlcmd = "SELECT distinct v_guid, dev_partition FROM vw_dds_devices_for_flow_cal "
-                     "WHERE v_guid IS NOT NULL "
+            sqlcmd = "SELECT distinct org_v_guid, dev_partition FROM vw_dds_devices_for_flow_cal "
+                     "WHERE org_v_guid IS NOT NULL "
                      "AND dev_partition IS NOT NULL";
         }
         if (opendatabase(connection_url))
         {
             pqxx::result guidtableresult = execute_query(sqlcmd);
+            if (guidtableresult.empty())
+            {
+                sqlcmd = "SELECT distinct org_v_guid, dev_partition FROM vw_dds_devices_for_flow_cal "
+                        "WHERE org_v_guid IS NOT NULL "
+                        "AND dev_partition IS NOT NULL";
+                guidtableresult = execute_query(sqlcmd);
+            }
             for (auto const &row : guidtableresult)
             {
                 std::string dev_partition = row[1].as<std::string>();
@@ -208,12 +219,29 @@ int totalsize_cal(uint16_t rawsize)
     return newrawsize;
 }
 
-RTPS_DATA_STRUCTURE convertrtpspacket(pcpp::Packet &packet, int index)
+RTPS_DATA_STRUCTURE convertrtpspacket(pcpp::Packet &packet, int index, int virguid_idx )
 {
     RTPS_DATA_STRUCTURE rtps_data;
-    int udpidx = index - 8;
-
     const uint8_t *payload = packet.getLayerOfType<pcpp::IPv4Layer>()->getLayerPayload();
+    int udpidx = index - 8;
+    int rtpsidx = index;
+    if (virguid_idx != -1)
+    {
+        rtpsidx = virguid_idx;
+        // rtps guid
+        rtps_data.rtps_hostid = byteArrayToHexString(payload + rtpsidx + 4, 4);
+        rtps_data.rtps_appid = byteArrayToHexString(payload + rtpsidx + 8, 4);
+        rtps_data.rtps_instanceid = byteArrayToHexString(payload + rtpsidx + 12, 4);
+        // rtps_data.rtps_writer_entitykey = byteArrayToHexString(payload + index + 44, 4);
+    } else {
+        rtpsidx = index;
+        // rtps guid
+        rtps_data.rtps_hostid = byteArrayToHexString(payload + rtpsidx + 8, 4);
+        rtps_data.rtps_appid = byteArrayToHexString(payload + rtpsidx + 12, 4);
+        rtps_data.rtps_instanceid = byteArrayToHexString(payload + rtpsidx + 16, 4);
+        // rtps_data.rtps_writer_entitykey = byteArrayToHexString(payload + index + 44, 4);
+    }
+
     // udp info
     // rtps_data.udp_src_port = byteArrayToDecimal(payload + udpidx, 2);
     // rtps_data.udp_dst_port = byteArrayToDecimal(payload + udpidx + 2, 2);
@@ -226,11 +254,6 @@ RTPS_DATA_STRUCTURE convertrtpspacket(pcpp::Packet &packet, int index)
     // rtps_data.rtps_ver_minor = payload[index + 5];
     // rtps_data.rtps_vendorId = byteArrayToHexString(payload + index + 6, 2);
 
-    // rtps guid
-    rtps_data.rtps_hostid = byteArrayToHexString(payload + index + 8, 4);
-    rtps_data.rtps_appid = byteArrayToHexString(payload + index + 12, 4);
-    rtps_data.rtps_instanceid = byteArrayToHexString(payload + index + 16, 4);
-    // rtps_data.rtps_writer_entitykey = byteArrayToHexString(payload + index + 44, 4);
 
     rtps_data.timestamp = packet.getRawPacket()->getPacketTimeStamp().tv_sec;
 
@@ -374,14 +397,23 @@ void rtpscallback(std::queue<pcpp::Packet> &packetQueue)
             int M = sizeof(searchBytes) / sizeof(searchBytes[0]);
             int N = payloadLength;
             int index = KMPSearch(searchBytes, M, payload, N);
+            // std::cout << "index " << index << std::endl;
 
             if (index == 8 || index == 36)
             {
-                RTPS_DATA_STRUCTURE rtps_data = convertrtpspacket(packet, index);
+                // std::cout << "find rtps bytes" << std::endl;
+                uint8_t PID_ORIGINAL_bytes[] = {0x61, 0x00, 0x18, 0x00};
+                int M = sizeof(PID_ORIGINAL_bytes) / sizeof(PID_ORIGINAL_bytes[0]);
+                int N = payloadLength;
+                int rtpsguid_idx = KMPSearch(PID_ORIGINAL_bytes, M, payload, N);
 
+                RTPS_DATA_STRUCTURE rtps_data = convertrtpspacket(packet, index, rtpsguid_idx);
                 std::string guid = rtps_data.rtps_hostid +
                                    rtps_data.rtps_appid +
                                    rtps_data.rtps_instanceid;
+                if (rtpsguid_idx != -1){
+                    std::cout << "org guid --->" << guid << std::endl;
+                }
                 //    rtps_data.rtps_writer_entitykey;
                 // std::cout <<  " packet length " << rtps_data.udp_length << std::endl;
 
@@ -554,9 +586,17 @@ void printUsage()
               << "  -a, --ipaddr         Set the IP address of the device. Default: None.\n"
               << "  -b, --partition      Set the partition of the . Default: None.\n"
               << "  -h, --help           Display this help message.\n"
-              << "  -c, --connectionurl  Set the PostgreSQL connection URL. Default: postgresql://dds_paas:postgres@10.1.1.200:5433/paasdb.\n"
+              << "  -c, --connectionurl  Set the PostgreSQL connection URL. Default: postgresql://postgres:njTqJ2cavzJi0PfugfpY1jf61yp5jmoqIB1fFyIGw8w=@paasdb.default:5433/postgres.\n"
               << "  -m, --testmode      Test mode. Default: False.\n"
               << "  -t, --threadcount   Set the number of threads. Default: 3.\n";
+}
+
+std::string replacePasswordInURL(const std::string& url, const std::string& oldPassword, const std::string& newPassword) {
+    size_t startPos = url.find(oldPassword);
+    if (startPos == std::string::npos) {
+        return url; // 如果找不到舊密碼，返回原始URL
+    }
+    return url.substr(0, startPos) + newPassword + url.substr(startPos + oldPassword.length());
 }
 
 int main(int argc, char *argv[])
@@ -566,9 +606,12 @@ int main(int argc, char *argv[])
     std::string filepath = "";
     std::string ipaddr = "";
     std::string partittion = "";
-    std::string connection_url = "postgresql://dds_paas:postgres@10.1.1.200:5433/paasdb";
+    std::string connection_url = "postgresql://postgres:njTqJ2cavzJi0PfugfpY1jf61yp5jmoqIB1fFyIGw8w=@paasdb.default:5433/postgres";
+    // std::string connection_url = "postgresql://postgres:admin@140.110.7.17:5433/postgres";
     bool test_mode = false;
     int thread_count = 3;
+    std::string oldPassword = "njTqJ2cavzJi0PfugfpY1jf61yp5jmoqIB1fFyIGw8w=";
+    std::string newPassword = "admin";
 
     for (int i = 1; i < argc; i++)
     {
@@ -619,6 +662,9 @@ int main(int argc, char *argv[])
 
     if (filepath != "")
         filepath = filepath + "/";
+    
+    std::string newURL = replacePasswordInURL(connection_url, oldPassword, newPassword);
+    connection_url = newURL;
 
     auto write_to_file_func = std::bind(&write_to_file, packetCount, filepath);
     std::thread write_to_file_thread(write_to_file_func);
