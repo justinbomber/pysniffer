@@ -27,8 +27,12 @@ std::string g_partition = "";
 std::queue<nlohmann::json> jsonQueue;
 std::map<std::string, std::string> guidmap;
 std::vector<std::queue<pcpp::Packet>> packetQueuesvec;
+std::queue<pcpp::Packet> packetQueue1;
+std::queue<pcpp::Packet> packetQueue2;
+std::queue<pcpp::Packet> packetQueue3;
 std::mutex mtx;
 pqxx::connection *connection = nullptr;
+int queueCount = 0;
 short byte_fix = 0;
 
 bool opendatabase(const std::string &url)
@@ -56,6 +60,18 @@ bool opendatabase(const std::string &url)
     }
 
     return result;
+}
+
+bool comparertpsPayload(uint8_t *payload) {
+    uint8_t target[] = {0x52, 0x54, 0x50, 0x53};
+
+    // 檢查 payload 是否與 target 相同
+    for (int i = 0; i < 4; ++i) {
+        if (payload[i + 8] != target[i]) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool closedatabase()
@@ -324,59 +340,6 @@ int KMPSearch(const uint8_t *pattern, int M, const uint8_t *txt, int N)
     return -1;
 }
 
-std::string extractData(uint8_t *payload, size_t length)
-{
-    std::vector<uint8_t> startPattern = {0x07, 0x00, 0x00, 0x00};
-    std::vector<uint8_t> endPattern = {0x00, 0x00, 0x01, 0x00};
-
-    size_t startPos = std::string::npos;
-    for (size_t i = 0; i <= length - startPattern.size(); ++i)
-    {
-        if (std::equal(startPattern.begin(), startPattern.end(), &payload[i]))
-        {
-            startPos = i + startPattern.size();
-            break;
-        }
-    }
-
-    if (startPos == std::string::npos)
-    {
-        return "no_partition";
-    }
-
-    size_t endPos = std::string::npos;
-    for (size_t i = startPos; i <= length - endPattern.size(); ++i)
-    {
-        if (std::equal(endPattern.begin(), endPattern.end(), &payload[i]))
-        {
-            endPos = i;
-            break;
-        }
-    }
-
-    if (endPos == std::string::npos || endPos <= startPos)
-    {
-        return "no_partition";
-    }
-
-    std::string result;
-    for (size_t i = startPos; i < endPos; ++i)
-    {
-        char ch = static_cast<char>(payload[i]);
-
-        if (ch >= 0 && ch <= 127)
-        {
-            result += ch;
-        }
-        else
-        {
-            return "no_partition";
-        }
-    }
-
-    return result;
-}
-
 static void start_subcap(std::string ipaddr);
 
 void rtpscallback(std::queue<pcpp::Packet> &packetQueue)
@@ -387,37 +350,34 @@ void rtpscallback(std::queue<pcpp::Packet> &packetQueue)
         {
             pcpp::Packet packet = packetQueue.front();
             packetQueue.pop();
-            std::string ipaddr = packet.getLayerOfType<pcpp::IPv4Layer>()->getSrcIPAddress().toString();
-            if (ipaddr == "127.0.0.1")
-                return;
+            // std::string ipaddr = packet.getLayerOfType<pcpp::IPv4Layer>()->getSrcIPAddress().toString();
+            // if (ipaddr == "127.0.0.1")
+            //     return;
+            // uint8_t *payload = packet.getLayerOfType<pcpp::IPv4Layer>()->getLayerPayload();
+            // size_t payloadLength = packet.getLayerOfType<pcpp::IPv4Layer>()->getLayerPayloadSize();
+            // uint8_t PID_ORIGINAL_bytes[] = {0x61, 0x00, 0x18, 0x00};
+            // int M = sizeof(PID_ORIGINAL_bytes) / sizeof(PID_ORIGINAL_bytes[0]);
+            // int N = payloadLength;
+            // int rtpsguid_idx = KMPSearch(PID_ORIGINAL_bytes, M, payload, N);
+            // if (rtpsguid_idx != -1){
+            //     std::cout << "org guid --->" << byteArrayToHexString(payload + rtpsguid_idx +4, 12) << std::endl;
+            //     continue;
+            // }
+
             uint8_t *payload = packet.getLayerOfType<pcpp::IPv4Layer>()->getLayerPayload();
             size_t payloadLength = packet.getLayerOfType<pcpp::IPv4Layer>()->getLayerPayloadSize();
-
-            uint8_t searchBytes[] = {0x52, 0x54, 0x50, 0x53};
-            int M = sizeof(searchBytes) / sizeof(searchBytes[0]);
+            uint8_t PID_ORIGINAL_bytes[] = {0x61, 0x00, 0x18, 0x00};
+            int M = sizeof(PID_ORIGINAL_bytes) / sizeof(PID_ORIGINAL_bytes[0]);
             int N = payloadLength;
-            int index = KMPSearch(searchBytes, M, payload, N);
-            // std::cout << "index " << index << std::endl;
-
-            if (index == 8 || index == 36)
+            int rtpsguid_idx = KMPSearch(PID_ORIGINAL_bytes, M, payload, N);
+            if (rtpsguid_idx != -1 && comparertpsPayload(payload))
             {
-                // std::cout << "find rtps bytes" << std::endl;
-                uint8_t PID_ORIGINAL_bytes[] = {0x61, 0x00, 0x18, 0x00};
-                int M = sizeof(PID_ORIGINAL_bytes) / sizeof(PID_ORIGINAL_bytes[0]);
-                int N = payloadLength;
-                int rtpsguid_idx = KMPSearch(PID_ORIGINAL_bytes, M, payload, N);
-
-                RTPS_DATA_STRUCTURE rtps_data = convertrtpspacket(packet, index, rtpsguid_idx);
-                std::string guid = rtps_data.rtps_hostid +
-                                   rtps_data.rtps_appid +
-                                   rtps_data.rtps_instanceid;
-                if (rtpsguid_idx != -1){
-                    std::cout << "org guid --->" << guid << std::endl;
-                }
-                //    rtps_data.rtps_writer_entitykey;
-                // std::cout <<  " packet length " << rtps_data.udp_length << std::endl;
-
-                // if guid in guidmap
+                std::string guid = byteArrayToHexString(payload + rtpsguid_idx + 4, 12);
+                // std::cout <<  ": src --->" << ipLayer->getSrcIPAddress().toString()
+                //         << ", dst --->" << ipLayer->getDstIPAddress().toString()
+                //         << ", guid --->" << guid << std::endl;
+                
+                RTPS_DATA_STRUCTURE rtps_data = convertrtpspacket(packet, 8, rtpsguid_idx);
                 if (guidmap.find(guid) != guidmap.end())
                 {
                     // get time
@@ -434,6 +394,50 @@ void rtpscallback(std::queue<pcpp::Packet> &packetQueue)
                     jsonQueue.push(json_obj);
                 }
             }
+
+            // uint8_t searchBytes[] = {0x52, 0x54, 0x50, 0x53};
+            // // int M = sizeof(searchBytes) / sizeof(searchBytes[0]);
+            // // int N = payloadLength;
+            // int index = KMPSearch(searchBytes, M, payload, N);
+            // // std::cout << "index " << index << std::endl;
+
+            // if (index == 8 || index == 36)
+            // {
+            //     // std::cout << "find rtps bytes" << std::endl;
+            //     uint8_t PID_ORIGINAL_bytes[] = {0x61, 0x00, 0x18, 0x00};
+            //     int M = sizeof(PID_ORIGINAL_bytes) / sizeof(PID_ORIGINAL_bytes[0]);
+            //     int N = payloadLength;
+            //     int rtpsguid_idx = KMPSearch(PID_ORIGINAL_bytes, M, payload, N);
+            //     if (rtpsguid_idx != -1)
+            //         std::cout << "find rtpsguid_idx " << rtpsguid_idx << std::endl;
+
+            //     RTPS_DATA_STRUCTURE rtps_data = convertrtpspacket(packet, index, rtpsguid_idx);
+            //     std::string guid = rtps_data.rtps_hostid +
+            //                        rtps_data.rtps_appid +
+            //                        rtps_data.rtps_instanceid;
+            //     if (rtpsguid_idx != -1){
+            //         std::cout << "org guid --->" << guid << std::endl;
+            //     }
+            //     //    rtps_data.rtps_writer_entitykey;
+            //     // std::cout <<  " packet length " << rtps_data.udp_length << std::endl;
+
+            //     // if guid in guidmap
+            //     if (guidmap.find(guid) != guidmap.end())
+            //     {
+            //         // get time
+            //         time_t timestamp = rtps_data.timestamp;
+
+            //         // get traffic
+            //         int32_t rtps_content = totalsize_cal(rtps_data.udp_length);
+
+            //         nlohmann::json json_obj;
+            //         json_obj["timestamp"] = timestamp;
+            //         json_obj["dev_partition"] = guidmap[guid];
+            //         json_obj["total_traffic"] = rtps_content;
+            //         std::cout << "save json_obj " << json_obj << std::endl;
+            //         jsonQueue.push(json_obj);
+            //     }
+            // }
         }
         else
         {
@@ -449,12 +453,39 @@ struct PacketStats
         if (packet.isPacketOfType(pcpp::IPv4))
         {
             pcpp::IPv4Layer *ipLayer = packet.getLayerOfType<pcpp::IPv4Layer>();
+
             if (ipLayer != nullptr)
             {
                 // std::cout << "currtqueue " << curretqueue << std::endl;
-                packetQueuesvec[curretqueue].push(packet);
-                curretqueue = (curretqueue + 1) % packetQueuesvec.size();
-                return;
+                // packetQueuesvec[curretqueue].push(packet);
+                // curretqueue = (curretqueue + 1) % packetQueuesvec.size();
+                switch (queueCount)
+                {
+                    case 0:
+                    {
+                        packetQueue1.push(packet);
+                        queueCount = 1;
+                        break;
+                    }
+                    case 1:
+                    {
+                        packetQueue2.push(packet);
+                        queueCount = 2;
+                        break;
+                    }
+                    case 2:
+                    {
+                        packetQueue3.push(packet);
+                        queueCount = 0;
+                        break;
+                    }
+                    default:
+                    {
+                        packetQueue3.push(packet);
+                        queueCount = 0;
+                        break;
+                    }
+                }
             }
         }
     }
@@ -538,15 +569,19 @@ void write_to_file(int filesize, const std::string &filepath)
         {
             while (!jsonQueue.empty())
             {
-                jsonArray.push_back(jsonQueue.front());
+                nlohmann::json json_obj = jsonQueue.front();
                 jsonQueue.pop();
+                if (json_obj.is_object()) 
+                {
+                    jsonArray.push_back(json_obj);
+                }
                 if (jsonArray.size() > filesize)
                     break;
             }
             auto currentTime = std::chrono::steady_clock::now();
             auto elapsedTime = std::chrono::duration_cast<std::chrono::seconds>(currentTime - startTime).count();
 
-            if (elapsedTime >= 60)
+            if (elapsedTime >= 30)
             {
                 break;
             }
@@ -554,7 +589,7 @@ void write_to_file(int filesize, const std::string &filepath)
 
         if (jsonArray.size() == 0)
             continue;
-        std::cout << "---> jsonArray size: " << jsonArray.size() << std::endl;
+        // std::cout << "---> jsonArray size: " << jsonArray.size() << std::endl;
         std::ofstream file(filelst[index]);
         if (file.is_open())
         {
@@ -562,9 +597,13 @@ void write_to_file(int filesize, const std::string &filepath)
 
             std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
 
-            std::cout << "the current time is : " << std::ctime(&currentTime);
+            std::cout << " save to json file at : " << std::ctime(&currentTime);
 
-            file << jsonArray.dump(4);
+            try {
+                file << jsonArray.dump(4);
+            } catch (const std::exception& e) {
+                std::cerr << "An exception occurred: " << e.what() << '\n';
+            }
             file.close();
         }
         else
@@ -572,7 +611,8 @@ void write_to_file(int filesize, const std::string &filepath)
             std::cerr << "failed to open file: " << filelst[index] << std::endl;
         }
         index = (index + 1) % 2;
-        std::ofstream newfile(filelst[index]);
+        file.open(filelst[index]);
+        file.close();
     }
 }
 
@@ -670,17 +710,15 @@ int main(int argc, char *argv[])
     std::thread write_to_file_thread(write_to_file_func);
     write_to_file_thread.detach();
 
-    for (int i = 0; i < thread_count; i++)
-    {
-        std::queue<pcpp::Packet> packetQueue;
-        packetQueuesvec.push_back(packetQueue);
-    }
-    for (int i = 0; i < thread_count; i++)
-    {
-        auto packet_queue_parser_func = std::bind(&rtpscallback, std::ref(packetQueuesvec[i]));
-        std::thread packet_queue_parser_thread(packet_queue_parser_func);
-        packet_queue_parser_thread.detach();
-    }
+    auto packet_queue_parser_func1 = std::bind(&rtpscallback, std::ref(packetQueue1));
+    std::thread packet_queue_parser_thread1(packet_queue_parser_func1);
+    packet_queue_parser_thread1.detach();
+    auto packet_queue_parser_func2 = std::bind(&rtpscallback, std::ref(packetQueue2));
+    std::thread packet_queue_parser_thread2(packet_queue_parser_func2);
+    packet_queue_parser_thread2.detach();
+    auto packet_queue_parser_func3 = std::bind(&rtpscallback, std::ref(packetQueue3));
+    std::thread packet_queue_parser_thread3(packet_queue_parser_func3);
+    packet_queue_parser_thread3.detach();
 
     auto guidmanager_func = std::bind(&guidmanager, connection_url, test_mode);
     std::thread guidmanager_thread(guidmanager_func);
