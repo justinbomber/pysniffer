@@ -32,18 +32,16 @@ echo "start sniffer.py and dbwriter.py..."
 
 ./capture -i any -p 1000 -c postgresql://postgres:njTqJ2cavzJi0PfugfpY1jf61yp5jmoqIB1fFyIGw8w=@$PAASDB_SERVICE_HOST:$PAASDB_SERVICE_PORT/postgres &
 ./dbwriter -t 60 -d postgresql://postgres:njTqJ2cavzJi0PfugfpY1jf61yp5jmoqIB1fFyIGw8w=@$PAASDB_SERVICE_HOST:$PAASDB_SERVICE_PORT/postgres &
-#capture_restart_count=0
 while true; do
     if ! pgrep -f ./capture > /dev/null; then
         echo "capture not running, starting it..."
-        ./capture -i eth0 -p 1000 -c postgresql://postgres:njTqJ2cavzJi0PfugfpY1jf61yp5jmoqIB1fFyIGw8w=@$PAASDB_SERVICE_HOST:$PAASDB_SERVICE_PORT/postgres &
-	((capture_restart_count++))
-        #echo "capture restarted $capture_restart_count times."
+        ./capture -i any -p 1000 -c postgresql://postgres:njTqJ2cavzJi0PfugfpY1jf61yp5jmoqIB1fFyIGw8w=@$PAASDB_SERVICE_HOST:$PAASDB_SERVICE_PORT/postgres &
     fi
     
     if ! pgrep -f ./dbwriter > /dev/null; then
         echo "dbwriter not running, starting it..."
-        ./dbwriter -t 60 -d $PY_DB_URL &
+        ./dbwriter -t 60 -d postgresql://postgres:njTqJ2cavzJi0PfugfpY1jf61yp5jmoqIB1fFyIGw8w=@$PAASDB_SERVICE_HOST:$PAASDB_SERVICE_PORT/postgres &
+
     fi
     
     sleep 2

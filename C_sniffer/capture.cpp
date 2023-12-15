@@ -350,19 +350,6 @@ void rtpscallback(std::queue<pcpp::Packet> &packetQueue)
         {
             pcpp::Packet packet = packetQueue.front();
             packetQueue.pop();
-            // std::string ipaddr = packet.getLayerOfType<pcpp::IPv4Layer>()->getSrcIPAddress().toString();
-            // if (ipaddr == "127.0.0.1")
-            //     return;
-            // uint8_t *payload = packet.getLayerOfType<pcpp::IPv4Layer>()->getLayerPayload();
-            // size_t payloadLength = packet.getLayerOfType<pcpp::IPv4Layer>()->getLayerPayloadSize();
-            // uint8_t PID_ORIGINAL_bytes[] = {0x61, 0x00, 0x18, 0x00};
-            // int M = sizeof(PID_ORIGINAL_bytes) / sizeof(PID_ORIGINAL_bytes[0]);
-            // int N = payloadLength;
-            // int rtpsguid_idx = KMPSearch(PID_ORIGINAL_bytes, M, payload, N);
-            // if (rtpsguid_idx != -1){
-            //     std::cout << "org guid --->" << byteArrayToHexString(payload + rtpsguid_idx +4, 12) << std::endl;
-            //     continue;
-            // }
 
             uint8_t *payload = packet.getLayerOfType<pcpp::IPv4Layer>()->getLayerPayload();
             size_t payloadLength = packet.getLayerOfType<pcpp::IPv4Layer>()->getLayerPayloadSize();
@@ -373,9 +360,6 @@ void rtpscallback(std::queue<pcpp::Packet> &packetQueue)
             if (rtpsguid_idx != -1 && comparertpsPayload(payload))
             {
                 std::string guid = byteArrayToHexString(payload + rtpsguid_idx + 4, 12);
-                // std::cout <<  ": src --->" << ipLayer->getSrcIPAddress().toString()
-                //         << ", dst --->" << ipLayer->getDstIPAddress().toString()
-                //         << ", guid --->" << guid << std::endl;
                 
                 RTPS_DATA_STRUCTURE rtps_data = convertrtpspacket(packet, 8, rtpsguid_idx);
                 if (guidmap.find(guid) != guidmap.end())
@@ -395,49 +379,6 @@ void rtpscallback(std::queue<pcpp::Packet> &packetQueue)
                 }
             }
 
-            // uint8_t searchBytes[] = {0x52, 0x54, 0x50, 0x53};
-            // // int M = sizeof(searchBytes) / sizeof(searchBytes[0]);
-            // // int N = payloadLength;
-            // int index = KMPSearch(searchBytes, M, payload, N);
-            // // std::cout << "index " << index << std::endl;
-
-            // if (index == 8 || index == 36)
-            // {
-            //     // std::cout << "find rtps bytes" << std::endl;
-            //     uint8_t PID_ORIGINAL_bytes[] = {0x61, 0x00, 0x18, 0x00};
-            //     int M = sizeof(PID_ORIGINAL_bytes) / sizeof(PID_ORIGINAL_bytes[0]);
-            //     int N = payloadLength;
-            //     int rtpsguid_idx = KMPSearch(PID_ORIGINAL_bytes, M, payload, N);
-            //     if (rtpsguid_idx != -1)
-            //         std::cout << "find rtpsguid_idx " << rtpsguid_idx << std::endl;
-
-            //     RTPS_DATA_STRUCTURE rtps_data = convertrtpspacket(packet, index, rtpsguid_idx);
-            //     std::string guid = rtps_data.rtps_hostid +
-            //                        rtps_data.rtps_appid +
-            //                        rtps_data.rtps_instanceid;
-            //     if (rtpsguid_idx != -1){
-            //         std::cout << "org guid --->" << guid << std::endl;
-            //     }
-            //     //    rtps_data.rtps_writer_entitykey;
-            //     // std::cout <<  " packet length " << rtps_data.udp_length << std::endl;
-
-            //     // if guid in guidmap
-            //     if (guidmap.find(guid) != guidmap.end())
-            //     {
-            //         // get time
-            //         time_t timestamp = rtps_data.timestamp;
-
-            //         // get traffic
-            //         int32_t rtps_content = totalsize_cal(rtps_data.udp_length);
-
-            //         nlohmann::json json_obj;
-            //         json_obj["timestamp"] = timestamp;
-            //         json_obj["dev_partition"] = guidmap[guid];
-            //         json_obj["total_traffic"] = rtps_content;
-            //         std::cout << "save json_obj " << json_obj << std::endl;
-            //         jsonQueue.push(json_obj);
-            //     }
-            // }
         }
         else
         {
