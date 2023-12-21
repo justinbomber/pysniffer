@@ -10,7 +10,7 @@ import argparse
 
 test_mode = False
 timezone = 8
-databaseurl = 'postgresql://postgres:admin@140.110.7.17:5433/postgres'
+databaseurl = 'postgresql://postgres:admin@paasdb.default:5433/postgres'
 
 
 pd.set_option('display.max_rows', None)
@@ -88,7 +88,7 @@ def modify_array(arr, starttimelst, endtimelst):
     # print("Modified array: ", modified_arr)
     return modified_arr
 
-def cal_sort_packet(df, time_window):
+def cal_sort_packet(df, time_window, last_df):
     global test_mode
     global timezone
     global databaseurl
@@ -111,6 +111,15 @@ def cal_sort_packet(df, time_window):
         end_date = row['svc_end_date'] if (pd.notnull(row['svc_end_date']) and row['svc_end_date'] != 0) else 'None'
         date_pairs.append([start_date, end_date])
 
+
+    if last_df.empty:
+        df = df
+    else:
+        df = pd.concat([last_df, df])
+
+    nextdf = df[df['timestamp'] == df['timestamp'].max()]
+    df = df[df['timestamp'] != df['timestamp'].max()]
+
     # generate_starttime list
     starttimelst = [date for date in viewdf['svc_eff_date'] if date != 0]
 
@@ -129,10 +138,9 @@ def cal_sort_packet(df, time_window):
     # 根據切割範圍計算流量總合
     outdf = aggregate_traffic(df, modifytime)
     # outdf = aggregate_traffic(df, timerange)
-
-    gc.collect()
+    
     # 返回view table, 結果的table, 服務啟動範圍列表
-    return viewdf, outdf, date_pairs
+    return nextdf, viewdf, outdf, date_pairs
 
 def convert_to_dict_of_arrays(data):
     # 初始化字典來儲存數組
@@ -204,6 +212,7 @@ def main():
     while True:
         # print(os.path.getsize(my_list[index]))
         time.sleep(2)
+        last_df = pd.DataFrame()
         if os.path.getsize(my_list[index]) >= 200:
             change = True
             try:
@@ -212,7 +221,7 @@ def main():
                     # jfile = convert_to_dict_of_arrays(jfile)
                     df_file = pd.DataFrame(jfile)
                     json_file.close()
-                    servicetable, outputlst, date_pairs = cal_sort_packet(df_file, int(args.timewindow))
+                    lastdf, servicetable, outputlst, date_pairs = cal_sort_packet(df_file, int(args.timewindow), last_df)
 
                     if (test_mode):
                         print("=================")

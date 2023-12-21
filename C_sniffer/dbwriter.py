@@ -111,7 +111,7 @@ def cal_sort_packet(df, time_window, last_df):
         end_date = row['svc_end_date'] if (pd.notnull(row['svc_end_date']) and row['svc_end_date'] != 0) else 'None'
         date_pairs.append([start_date, end_date])
 
-
+    print("+++++++++++++++++")
     if last_df.empty:
         df = df
     else:
@@ -201,6 +201,7 @@ def main():
     databaseurl = args.databaseurl
     new_url = replace_password_in_url(databaseurl, old_password, new_password)
     databaseurl = new_url
+    databaseurl = "postgresql://dds_paas:postgres@10.1.1.200:5433/paasdb"
     engine = create_engine(f'{databaseurl}')
 
 
@@ -222,6 +223,9 @@ def main():
                     df_file = pd.DataFrame(jfile)
                     json_file.close()
                     lastdf, servicetable, outputlst, date_pairs = cal_sort_packet(df_file, int(args.timewindow), last_df)
+                    print("lastdf:", lastdf)
+                    print("==================")
+                    print("outputlst:", outputlst)
 
                     if (test_mode):
                         print("=================")
@@ -244,7 +248,7 @@ def main():
                         print("service_continue")
                         if not test_mode:
                             try:
-                                outputlst.to_sql('tb_cam_traffic_info', engine, if_exists='append', index=False)
+                                # outputlst.to_sql('tb_cam_traffic_info', engine, if_exists='append', index=False)
                                 print("save data to databse successfully.")
                             except Exception as e:
                                 print(e)
@@ -254,9 +258,10 @@ def main():
                         startmintime = servicetable[servicetable['svc_eff_date'] != 0]['svc_eff_date'].min()
                         endmaxtime = servicetable[servicetable['svc_end_date'] != 0]['svc_end_date'].max()
                         outputlst = outputlst[(outputlst['starttime'] >= startmintime) & (outputlst['endtime'] <= endmaxtime)]
+                        print(startmintime, endmaxtime)
                         if not test_mode:
                             try:
-                                outputlst.to_sql('tb_cam_traffic_info', engine, if_exists='append', index=False)
+                                # outputlst.to_sql('tb_cam_traffic_info', engine, if_exists='append', index=False)
                                 print("save data to databse successfully.")
                             except Exception as e:
                                 print(e)
